@@ -154,22 +154,22 @@ function AddTrip({ A, onBack, onSaved }) {
         <div style={{ marginBottom: 10 }}>
           <div style={label}>Label</div>
           <input value={title} onChange={e => setTitle(e.target.value)}
-            placeholder="Duval · Newport → LAX" style={input} />
+            placeholder="Short label (e.g. Newport → LAX)" style={input} />
         </div>
         <div style={{ marginBottom: 10 }}>
           <div style={label}>Passenger</div>
           <input value={passenger} onChange={e => setPassenger(e.target.value)}
-            placeholder="Franci Gray" style={input} />
+            placeholder="Passenger name" style={input} />
         </div>
         <div style={{ marginBottom: 10 }}>
           <div style={label}>Pickup address</div>
           <input value={pickup} onChange={e => setPickup(e.target.value)}
-            placeholder="169 S Poplar Ave, Brea CA" style={input} />
+            placeholder="Street, City" style={input} />
         </div>
         <div style={{ marginBottom: 10 }}>
           <div style={label}>Drop-off</div>
           <input value={dropoff} onChange={e => setDropoff(e.target.value)}
-            placeholder="Ontario Intl (ONT)" style={input} />
+            placeholder="Destination" style={input} />
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
           <div>
@@ -180,7 +180,7 @@ function AddTrip({ A, onBack, onSaved }) {
           <div>
             <div style={label}>Flight</div>
             <input value={flight} onChange={e => setFlight(e.target.value)}
-              placeholder="DL 2104 · 9:55 PM" style={input} />
+              placeholder="Flight # · time" style={input} />
           </div>
         </div>
       </Section>
@@ -194,7 +194,7 @@ function AddTrip({ A, onBack, onSaved }) {
           <div>
             <div style={label}>Fare $</div>
             <input type="number" inputMode="numeric" value={fare}
-              onChange={e => setFare(e.target.value)} placeholder="260"
+              onChange={e => setFare(e.target.value)} placeholder="0"
               style={{ ...input, fontFamily: A.mono }} />
           </div>
           {category === 'dispatch' && (
@@ -202,7 +202,7 @@ function AddTrip({ A, onBack, onSaved }) {
               <div>
                 <div style={label}>Driver pay</div>
                 <input type="number" inputMode="numeric" value={driverPay}
-                  onChange={e => setDriverPay(e.target.value)} placeholder="160"
+                  onChange={e => setDriverPay(e.target.value)} placeholder="0"
                   style={{ ...input, fontFamily: A.mono }} />
               </div>
               <div>
@@ -219,14 +219,14 @@ function AddTrip({ A, onBack, onSaved }) {
           <div style={{ marginBottom: 10 }}>
             <div style={label}>Assigned to</div>
             <input value={assignedTo} onChange={e => setAssignedTo(e.target.value)}
-              placeholder="Marco R." style={input} />
+              placeholder="Driver name" style={input} />
           </div>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
           <div>
             <div style={label}>Invoice #</div>
             <input value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)}
-              placeholder="SD-2604-026"
+              placeholder="Invoice #"
               style={{ ...input, fontFamily: A.mono }} />
           </div>
           <div>
