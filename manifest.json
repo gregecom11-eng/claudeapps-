@@ -1,0 +1,11 @@
+{
+  "name": "Weekly Schedule",
+  "short_name": "Schedule",
+  "description": "Weekly driving schedule, dispatch dashboard, and trip composer.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e0e10",
+  "theme_color": "#0e0e10"
+}

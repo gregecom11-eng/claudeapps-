@@ -51,10 +51,29 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
+  // On a real phone we drop the simulated device frame and fill the viewport.
+  const [fullscreen, setFullscreen] = useState(() => typeof window !== 'undefined' && window.innerWidth < 500);
+  useEffect(() => {
+    const onResize = () => setFullscreen(window.innerWidth < 500);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, []);
+
   const hour = now.getHours();
   const A = window.resolveAesthetic(state.aesthetic, state.theme, hour);
   const resolvedMode = A.mode;  // 'dark' | 'light'
   const isIOS = state.platform === 'ios';
+
+  // Sync the document/body background so iOS safe areas and PWA chrome match the palette.
+  useEffect(() => {
+    document.body.style.background = A.bg;
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta) themeMeta.setAttribute('content', A.bg);
+  }, [A.bg]);
 
   // For compare mode we render both at once
   const Alight = window.resolveAesthetic(state.aesthetic, 'light', hour);
@@ -75,42 +94,65 @@ function App() {
     />
   );
 
-  const deviceWrap = (palette, suffix) => (
-    <div style={{ position: 'relative' }} key={suffix}>
-      <DeviceLabel
-        platform={state.platform}
-        aesthetic={palette.label}
-        themeMode={state.theme}
-        resolved={palette.mode}
-        now={now}
-      />
-      {isIOS
-        ? <IOSDevice dark={palette.mode === 'dark'} width={402} height={874}>
-            <div style={{ background: palette.bg, height: '100%' }}>{makeScreen(palette)}</div>
-          </IOSDevice>
-        : <AndroidDevice width={412} height={892}>
-            <div style={{ background: palette.bg, height: '100%' }}>{makeScreen(palette)}</div>
-          </AndroidDevice>
-      }
-    </div>
-  );
+  const deviceWrap = (palette, suffix) => {
+    if (fullscreen) {
+      return (
+        <div key={suffix} style={{
+          width: '100vw', height: '100dvh',
+          background: palette.bg, color: palette.text,
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+          paddingLeft: 'env(safe-area-inset-left)',
+          paddingRight: 'env(safe-area-inset-right)',
+          display: 'flex', flexDirection: 'column',
+        }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            {makeScreen(palette)}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div style={{ position: 'relative' }} key={suffix}>
+        <DeviceLabel
+          platform={state.platform}
+          aesthetic={palette.label}
+          themeMode={state.theme}
+          resolved={palette.mode}
+          now={now}
+        />
+        {isIOS
+          ? <IOSDevice dark={palette.mode === 'dark'} width={402} height={874}>
+              <div style={{ background: palette.bg, height: '100%' }}>{makeScreen(palette)}</div>
+            </IOSDevice>
+          : <AndroidDevice width={412} height={892}>
+              <div style={{ background: palette.bg, height: '100%' }}>{makeScreen(palette)}</div>
+            </AndroidDevice>
+        }
+      </div>
+    );
+  };
 
   // Background of the staging area — adapts to theme for the single-device case,
   // stays neutral when showing both side-by-side.
-  const stageBg = state.compare
-    ? '#1f1d1a'
-    : (resolvedMode === 'dark' ? '#1a1815' : '#f4f2ec');
+  const stageBg = fullscreen
+    ? A.bg
+    : state.compare
+      ? '#1f1d1a'
+      : (resolvedMode === 'dark' ? '#1a1815' : '#f4f2ec');
+
+  const showCompare = state.compare && !fullscreen;
 
   return (
     <div style={{
       minHeight: '100vh', background: stageBg,
-      padding: '40px 20px',
-      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-      gap: 40, flexWrap: 'wrap',
+      padding: fullscreen ? 0 : '40px 20px',
+      display: 'flex', alignItems: fullscreen ? 'stretch' : 'flex-start', justifyContent: 'center',
+      gap: fullscreen ? 0 : 40, flexWrap: 'wrap',
       fontFamily: '-apple-system, system-ui, sans-serif',
       transition: 'background 0.3s ease',
     }}>
-      {state.compare
+      {showCompare
         ? (<>{deviceWrap(Alight, 'light')}{deviceWrap(Adark, 'dark')}</>)
         : deviceWrap(A, 'single')
       }
