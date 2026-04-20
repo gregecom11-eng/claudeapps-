@@ -183,7 +183,9 @@ function AppScreen({ view, setView, pickedDay, pickDay, back, goto, aesthetic: A
         <div style={{ height: 54 }} />
         {view === 'week' && (
           <>
-            <WeekHeader aesthetic={A} isDark={A.mode === 'dark'} toggleTheme={toggleTheme} />
+            <WeekHeader aesthetic={A} isDark={A.mode === 'dark'}
+              toggleTheme={toggleTheme}
+              onImport={() => goto('import')} />
             <WeekRings key={tick} onPickDay={pickDay} aesthetic={A} showEarn={showEarn} />
           </>
         )}
@@ -203,6 +205,10 @@ function AppScreen({ view, setView, pickedDay, pickDay, back, goto, aesthetic: A
           <Dispatch A={A} key={tick}
             onOpenTrip={() => {}}
             onAdd={() => goto('add')} />
+        )}
+        {view === 'import' && (
+          <WeekImport A={A} onBack={back}
+            onApplied={() => { refresh(); goto('week'); }} />
         )}
         <div style={{ height: 24 }} />
       </div>
@@ -265,7 +271,17 @@ function TabBar({ view, goto, A }) {
   );
 }
 
-function WeekHeader({ aesthetic: A, isDark, toggleTheme }) {
+function WeekHeader({ aesthetic: A, isDark, toggleTheme, onImport }) {
+  const circleBtn = {
+    width: 26, height: 26, padding: 0,
+    background: 'transparent', color: A.muted,
+    border: `1px solid ${A.gridLine}`, borderRadius: '50%',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'pointer', flexShrink: 0,
+    transition: 'color 0.2s ease, border-color 0.2s ease',
+  };
+  const hoverIn = e => { e.currentTarget.style.color = A.accent; e.currentTarget.style.borderColor = A.accent; };
+  const hoverOut = e => { e.currentTarget.style.color = A.muted; e.currentTarget.style.borderColor = A.gridLine; };
   return (
     <div style={{ padding: '8px 16px 14px' }}>
       <div style={{
@@ -276,25 +292,27 @@ function WeekHeader({ aesthetic: A, isDark, toggleTheme }) {
           fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase',
           color: A.muted, fontFamily: A.mono,
         }}>{WEEK.weekOf} · {WEEK.driver}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{
             fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase',
             color: A.faint, fontFamily: A.mono,
           }}>{WEEK.vehicle.split(' · ')[0]}</div>
+          {onImport && (
+            <button onClick={onImport}
+              aria-label="Import week from Claude"
+              title="Import from Claude"
+              style={circleBtn}
+              onMouseEnter={hoverIn} onMouseLeave={hoverOut}
+            >
+              <ImportIcon />
+            </button>
+          )}
           {toggleTheme && (
             <button onClick={toggleTheme}
               aria-label={isDark ? 'Switch to day mode' : 'Switch to night mode'}
               title={isDark ? 'Day mode' : 'Night mode'}
-              style={{
-                width: 26, height: 26, padding: 0,
-                background: 'transparent', color: A.muted,
-                border: `1px solid ${A.gridLine}`, borderRadius: '50%',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: 'pointer', flexShrink: 0,
-                transition: 'color 0.2s ease, border-color 0.2s ease',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.color = A.accent; e.currentTarget.style.borderColor = A.accent; }}
-              onMouseLeave={e => { e.currentTarget.style.color = A.muted; e.currentTarget.style.borderColor = A.gridLine.replace('rgba','rgba'); }}
+              style={circleBtn}
+              onMouseEnter={hoverIn} onMouseLeave={hoverOut}
             >
               <ThemeIcon isDark={isDark} small />
             </button>
@@ -306,6 +324,16 @@ function WeekHeader({ aesthetic: A, isDark, toggleTheme }) {
         fontFamily: A.display, letterSpacing: -0.8, lineHeight: 1,
       }}>{WEEK.weekLabel}</div>
     </div>
+  );
+}
+
+function ImportIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v12" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M4 19h16" />
+    </svg>
   );
 }
 

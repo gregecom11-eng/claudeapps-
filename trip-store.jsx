@@ -2,10 +2,15 @@
 // Waybill-shaped records live in localStorage.
 // Reads merge WEEK baseline with stored additions.
 
-const BASELINE_DATES = {
-  mon: '2026-04-20', tue: '2026-04-21', wed: '2026-04-22',
-  thu: '2026-04-23', fri: '2026-04-24', sat: '2026-04-25', sun: '2026-04-26',
-};
+// Active week's ID→ISO-date mapping is always derived from window.WEEK so that
+// imported weeks route trips to the right storage key.
+function dateForDay(dayId) {
+  const day = (window.WEEK && window.WEEK.days || []).find(d => d.id === dayId);
+  return day ? day.isoDate : null;
+}
+const BASELINE_DATES = new Proxy({}, {
+  get: (_, k) => dateForDay(k),
+});
 
 // Seed examples covering all 3 categories + payment states
 const SEED = {
