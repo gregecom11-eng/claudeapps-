@@ -5,6 +5,7 @@ const { DAY_START: _DS, DAY_END: _DE, HOURS: _H } = window.HOURS_CONST;
 
 function WeekRings({ onPickDay, aesthetic: A, showEarn }) {
   const trips = window.TripStore ? window.TripStore.loadTrips() : {};
+  const actuals = window.EarningsStore ? window.EarningsStore.getAll() : {};
   const t = WEEK.totals;
   // recompute week earnings with added trips
   let addedEarn = 0, addedHrs = 0;
@@ -15,23 +16,35 @@ function WeekRings({ onPickDay, aesthetic: A, showEarn }) {
   });
   const totalEarn = t.earnings + addedEarn;
   const totalHrs = Math.round((t.drive + addedHrs) * 10) / 10;
+  const totalActual = window.EarningsStore ? window.EarningsStore.totalActual() : 0;
+  const hasAnyActual = Object.keys(actuals).length > 0;
   return (
     <div style={{ padding: '4px 16px 40px' }}>
       {/* summary strip */}
       <div style={{
         display: 'grid', gridTemplateColumns: showEarn ? '1fr 1fr 1fr' : '1fr 1fr',
-        gap: 1, padding: '14px 2px 18px 2px',
+        gap: 10, padding: '14px 2px 18px 2px',
         borderBottom: `1px solid ${A.gridLine}`,
       }}>
-        {showEarn && <StatCell label="Projected" value={`$${totalEarn.toLocaleString()}`} A={A} big />}
+        {showEarn && (
+          <StatCell label="Actual"
+            value={hasAnyActual ? `$${totalActual.toLocaleString()}` : '—'}
+            A={A} big accent={hasAnyActual} />
+        )}
+        {showEarn && (
+          <StatCell label="Projected"
+            value={`~$${totalEarn.toLocaleString()}`}
+            A={A} muted />
+        )}
         <StatCell label="Drive hrs" value={totalHrs} A={A} />
-        <StatCell label="Miles" value={t.miles} A={A} />
       </div>
 
       {/* day rings */}
       <div style={{ marginTop: 4 }}>
         {WEEK.days.map((d, i) => {
           const stats = window.TripStore ? window.TripStore.getDayStats(d.id, trips) : { driveHours: d.driveHours, earnings: d.earnings };
+          const actual = actuals[d.id];
+          const hasActual = typeof actual === 'number';
           return (
           <button key={d.id} onClick={() => onPickDay(d.id)} style={{
             display: 'flex', alignItems: 'center', gap: 16,
@@ -54,8 +67,19 @@ function WeekRings({ onPickDay, aesthetic: A, showEarn }) {
                 <div style={{ flex: 1 }} />
                 {showEarn && (
                   <div style={{
-                    fontSize: 13, color: A.accent, fontFamily: A.mono, fontWeight: 500,
-                  }}>${stats.earnings}</div>
+                    display: 'flex', alignItems: 'baseline', gap: 6,
+                    fontFamily: A.mono,
+                  }}>
+                    {hasActual ? (
+                      <span style={{ fontSize: 13, color: A.accent, fontWeight: 500 }}>
+                        ${actual.toLocaleString()}
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 12, color: A.faint }}>
+                        ~${stats.earnings}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
               <div style={{
@@ -101,15 +125,16 @@ function WeekRings({ onPickDay, aesthetic: A, showEarn }) {
   );
 }
 
-function StatCell({ label, value, A, big }) {
+function StatCell({ label, value, A, big, muted, accent }) {
+  const color = accent ? A.accent : muted ? A.faint : A.text;
   return (
     <div>
       <div style={{
         fontSize: 9, letterSpacing: 1.2, textTransform: 'uppercase',
-        color: A.muted, fontFamily: A.mono, marginBottom: 3,
+        color: accent ? A.accent : A.muted, fontFamily: A.mono, marginBottom: 3,
       }}>{label}</div>
       <div style={{
-        fontSize: big ? 26 : 22, fontWeight: 500, color: A.text,
+        fontSize: big ? 24 : 20, fontWeight: 500, color,
         fontFamily: A.display, letterSpacing: -0.5, lineHeight: 1,
       }}>{value}</div>
     </div>
