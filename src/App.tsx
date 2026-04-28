@@ -1,44 +1,58 @@
-import { useEffect, useState } from "react";
-import { Header } from "./components/Header";
-import { Dashboard } from "./views/Dashboard";
-import { TaskBoard } from "./components/TaskBoard";
-import { EventsList } from "./components/EventsList";
-import { ActivityFeed } from "./components/ActivityFeed";
-import { Settings } from "./views/Settings";
-import { useStore } from "./hooks/useStore";
-import { useTheme } from "./hooks/useTheme";
-import { makeSeedState } from "./lib/seed";
-
-type View = "dashboard" | "tasks" | "events" | "activity" | "settings";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { AppShell } from "./components/AppShell";
+import { useAuth, AuthProvider } from "./lib/auth";
+import { Login } from "./routes/Login";
+import { Dashboard } from "./routes/Dashboard";
+import { Rides } from "./routes/Rides";
+import { RideDetail } from "./routes/RideDetail";
+import { RideForm } from "./routes/RideForm";
+import {
+  ClientsStub,
+  DriversStub,
+  InvoicesStub,
+  SettingsStub,
+} from "./routes/Stub";
 
 export function App() {
-  useTheme();
-  const { state, replaceAll } = useStore();
-  const [view, setView] = useState<View>("dashboard");
-
-  // First-run nudge: if everything is empty, drop in seed data so the UI
-  // is never a blank page on a fresh install.
-  useEffect(() => {
-    if (
-      state.tasks.length === 0 &&
-      state.events.length === 0 &&
-      state.agentLogs.length === 0
-    ) {
-      replaceAll(makeSeedState());
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
-    <div className="shell">
-      <Header view={view} onChange={setView} />
-      <main className="content">
-        {view === "dashboard" ? <Dashboard /> : null}
-        {view === "tasks" ? <TaskBoard /> : null}
-        {view === "events" ? <EventsList /> : null}
-        {view === "activity" ? <ActivityFeed /> : null}
-        {view === "settings" ? <Settings /> : null}
-      </main>
-    </div>
+    <AuthProvider>
+      <BrowserRouter>
+        <Gate />
+      </BrowserRouter>
+    </AuthProvider>
+  );
+}
+
+function Gate() {
+  const { ready, session } = useAuth();
+  if (!ready) {
+    return (
+      <div className="min-h-full flex items-center justify-center text-muted">
+        Loading…
+      </div>
+    );
+  }
+  if (!session) {
+    return (
+      <Routes>
+        <Route path="*" element={<Login />} />
+      </Routes>
+    );
+  }
+  return (
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route index element={<Dashboard />} />
+        <Route path="rides" element={<Rides />} />
+        <Route path="rides/new" element={<RideForm />} />
+        <Route path="rides/:id" element={<RideDetail />} />
+        <Route path="rides/:id/edit" element={<RideForm />} />
+        <Route path="clients" element={<ClientsStub />} />
+        <Route path="drivers" element={<DriversStub />} />
+        <Route path="invoices" element={<InvoicesStub />} />
+        <Route path="settings" element={<SettingsStub />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
   );
 }
