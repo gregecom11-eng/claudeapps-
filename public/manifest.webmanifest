@@ -1,0 +1,19 @@
+{
+  "name": "Limo Agent Dashboard",
+  "short_name": "Limo",
+  "description": "Tasks, events, and agent activity at a glance.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0c10",
+  "theme_color": "#0b0c10",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
