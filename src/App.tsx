@@ -8,6 +8,7 @@ import { Calendar } from "./routes/Calendar";
 import { Client } from "./routes/Client";
 import { Clients } from "./routes/Clients";
 import { Drivers } from "./routes/Drivers";
+import { Install } from "./routes/Install";
 import { Invoices } from "./routes/Invoices";
 import { Login } from "./routes/Login";
 import { Dashboard } from "./routes/Dashboard";
@@ -22,8 +23,9 @@ export function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Public: anyone (no auth) can land on /book */}
+          {/* Public: anyone (no auth) can land on /book or /install */}
           <Route path="/book" element={<Book />} />
+          <Route path="/install" element={<Install />} />
           {/* Everything else goes through the auth + role gate */}
           <Route path="/*" element={<Gate />} />
         </Routes>

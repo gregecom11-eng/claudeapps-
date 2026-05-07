@@ -3,6 +3,7 @@ import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/useTheme";
 import { Avatar } from "./Avatar";
 import { IconButton } from "./Button";
+import { InstallBanner } from "./InstallBanner";
 
 // Editorial-style shell for client-facing portal.
 // Single page (no nav tabs); just brand bar + sign out.
@@ -62,6 +63,8 @@ export function ClientShell() {
           </div>
         </div>
       </header>
+
+      <InstallBanner />
 
       <main className="flex-1 mx-auto max-w-[920px] w-full px-5 md:px-8 py-8 md:py-12">
         <Outlet />

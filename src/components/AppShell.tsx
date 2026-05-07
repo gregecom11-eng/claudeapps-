@@ -4,6 +4,7 @@ import { useTheme } from "../lib/useTheme";
 import { Avatar } from "./Avatar";
 import { IconButton } from "./Button";
 import { Icon, type IconName } from "./Icon";
+import { InstallBanner } from "./InstallBanner";
 
 const TABS: { to: string; end?: boolean; label: string; icon: IconName }[] = [
   { to: "/", end: true, label: "Today", icon: "today" },
@@ -158,6 +159,8 @@ export function AppShell() {
           </div>
         </div>
       </header>
+
+      <InstallBanner />
 
       <main className="flex-1 mx-auto max-w-[1200px] w-full px-4 md:px-6 py-6 md:py-8 pb-24 md:pb-12">
         <Outlet />

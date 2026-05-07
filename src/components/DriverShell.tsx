@@ -4,6 +4,7 @@ import { useTheme } from "../lib/useTheme";
 import { Avatar } from "./Avatar";
 import { IconButton } from "./Button";
 import { Icon, type IconName } from "./Icon";
+import { InstallBanner } from "./InstallBanner";
 
 const TABS: { to: string; end?: boolean; label: string; icon: IconName }[] = [
   { to: "/", end: true, label: "Today", icon: "today" },
@@ -86,6 +87,8 @@ export function DriverShell() {
           </div>
         </div>
       </header>
+
+      <InstallBanner />
 
       <main className="flex-1 mx-auto max-w-[680px] w-full px-4 py-6 pb-24">
         <Outlet />
