@@ -10,8 +10,8 @@ import {
   ClientsStub,
   DriversStub,
   InvoicesStub,
-  SettingsStub,
 } from "./routes/Stub";
+import { Settings } from "./routes/Settings";
 
 export function App() {
   return (
@@ -50,7 +50,7 @@ function Gate() {
         <Route path="clients" element={<ClientsStub />} />
         <Route path="drivers" element={<DriversStub />} />
         <Route path="invoices" element={<InvoicesStub />} />
-        <Route path="settings" element={<SettingsStub />} />
+        <Route path="settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

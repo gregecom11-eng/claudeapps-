@@ -10,9 +10,6 @@ export function DriversStub() {
 export function InvoicesStub() {
   return <Stub title="Invoices" />;
 }
-export function SettingsStub() {
-  return <Stub title="Settings" />;
-}
 
 function Stub({ title }: { title: string }) {
   return (
