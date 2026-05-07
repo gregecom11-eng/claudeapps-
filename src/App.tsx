@@ -1,8 +1,10 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
+import { DriverShell } from "./components/DriverShell";
 import { useAuth, AuthProvider } from "./lib/auth";
 import { Login } from "./routes/Login";
 import { Dashboard } from "./routes/Dashboard";
+import { Driver } from "./routes/Driver";
 import { Rides } from "./routes/Rides";
 import { RideDetail } from "./routes/RideDetail";
 import { RideForm } from "./routes/RideForm";
@@ -24,7 +26,7 @@ export function App() {
 }
 
 function Gate() {
-  const { ready, session } = useAuth();
+  const { ready, session, profile } = useAuth();
   if (!ready) {
     return (
       <div className="min-h-full flex items-center justify-center text-muted">
@@ -39,6 +41,23 @@ function Gate() {
       </Routes>
     );
   }
+
+  // Drivers get a stripped-down mobile-first shell with just their day.
+  // Owners get the full operations dashboard. Default to owner shell if
+  // the profile hasn't loaded yet (small flash) or for unknown roles.
+  const isDriver = profile?.role === "driver";
+
+  if (isDriver) {
+    return (
+      <Routes>
+        <Route element={<DriverShell />}>
+          <Route index element={<Driver />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    );
+  }
+
   return (
     <Routes>
       <Route element={<AppShell />}>

@@ -172,6 +172,32 @@ export async function listAllVehicles(): Promise<Vehicle[]> {
   return data ?? [];
 }
 
+// ── Driver (current user, scoped) ──────────────────────────────────
+// Calls the security-definer RPC to link the current auth user to a
+// drivers row by matching email. Returns the linked driver, or null if
+// no driver record exists for this user yet.
+export async function claimDriverByEmail(): Promise<Driver | null> {
+  const { data, error } = await supabase.rpc("claim_driver_by_email");
+  if (error) {
+    // 404 / function not found → migration hasn't been run yet.
+    throw error;
+  }
+  return (data as Driver | null) ?? null;
+}
+
+// "My today" / "my tomorrow" rely on RLS — RLS is what scopes the rows
+// to the current driver. The same listRides() works.
+
+// Send a magic-link invite to a (would-be) driver's email. The Supabase
+// auth Site URL config controls where they land.
+export async function sendDriverInvite(email: string): Promise<void> {
+  const { error } = await supabase.auth.signInWithOtp({
+    email: email.trim(),
+    options: { emailRedirectTo: `${window.location.origin}/` },
+  });
+  if (error) throw error;
+}
+
 // ── Profile (current user) ─────────────────────────────────────────
 export async function updateMyProfile(patch: {
   full_name?: string | null;

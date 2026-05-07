@@ -5,6 +5,7 @@ import {
   listAllDrivers,
   listAllVehicles,
   listClients,
+  sendDriverInvite,
   setDriverActive,
   setVehicleActive,
   updateMyProfile,
@@ -286,6 +287,19 @@ function DriversSection({ flash }: { flash: (m: string) => void }) {
     }
   };
 
+  const invite = async (d: Driver) => {
+    if (!d.email) {
+      flash("Add an email for this driver first.");
+      return;
+    }
+    try {
+      await sendDriverInvite(d.email);
+      flash(`Magic link sent to ${d.email}`);
+    } catch (err) {
+      flash(err instanceof Error ? err.message : "Invite failed");
+    }
+  };
+
   return (
     <Section
       eyebrow="02 — Team"
@@ -361,6 +375,7 @@ function DriversSection({ flash }: { flash: (m: string) => void }) {
               onCancelEdit={() => setEditingId(null)}
               onSave={(patch) => save(d, patch)}
               onToggle={() => toggleActive(d)}
+              onInvite={() => invite(d)}
             />
           ))
         )}
@@ -376,6 +391,7 @@ function DriverRow({
   onCancelEdit,
   onSave,
   onToggle,
+  onInvite,
 }: {
   driver: Driver;
   editing: boolean;
@@ -383,19 +399,22 @@ function DriverRow({
   onCancelEdit: () => void;
   onSave: (patch: Partial<Driver>) => void;
   onToggle: () => void;
+  onInvite: () => void;
 }) {
   const [name, setName] = useState(driver.full_name);
   const [phone, setPhone] = useState(driver.phone ?? "");
+  const [email, setEmail] = useState(driver.email ?? "");
 
   useEffect(() => {
     setName(driver.full_name);
     setPhone(driver.phone ?? "");
-  }, [driver.id, driver.full_name, driver.phone]);
+    setEmail(driver.email ?? "");
+  }, [driver.id, driver.full_name, driver.phone, driver.email]);
 
   if (editing) {
     return (
       <li
-        className="grid gap-3 md:grid-cols-[1fr_1fr_auto] items-end p-4"
+        className="grid gap-3 md:grid-cols-3 items-end p-4"
         style={{
           background: "var(--surface-2)",
           borderTop: "1px solid var(--border)",
@@ -415,7 +434,19 @@ function DriverRow({
             onChange={(e) => setPhone(e.target.value)}
           />
         </Field>
-        <div className="flex gap-2">
+        <Field
+          label="Email"
+          hint="Used for the driver app sign-in link."
+          optional
+        >
+          <input
+            className="field"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </Field>
+        <div className="md:col-span-3 flex justify-end gap-2">
           <button
             className="inline-flex items-center justify-center h-9 px-3 rounded-[8px] text-[13px]"
             style={{
@@ -432,6 +463,7 @@ function DriverRow({
               onSave({
                 full_name: name.trim(),
                 phone: phone.trim() || null,
+                email: email.trim() || null,
               })
             }
             disabled={!name.trim()}
@@ -472,7 +504,29 @@ function DriverRow({
         >
           Inactive
         </span>
+      ) : driver.profile_id ? (
+        <span
+          className="chip"
+          style={{
+            background: "transparent",
+            color: "var(--success)",
+            fontSize: 11,
+            borderColor: "color-mix(in oklab, var(--success) 35%, var(--border))",
+          }}
+          title="Driver has signed in and is linked to their account."
+        >
+          <Icon name="check" size={11} /> Linked
+        </span>
       ) : null}
+      <RowAction
+        onClick={onInvite}
+        icon="phone"
+        label={
+          driver.email
+            ? "Send sign-in link"
+            : "Add an email to enable invites"
+        }
+      />
       <RowAction onClick={onStartEdit} icon="note" label="Edit" />
       <RowAction
         onClick={onToggle}
