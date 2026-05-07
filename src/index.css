@@ -92,20 +92,142 @@ body {
 
 /* Form atoms */
 .label {
-  display: block; font-size: 11px; font-weight: 500;
-  letter-spacing: 0.06em; text-transform: uppercase;
+  display: block; font-size: 12px; font-weight: 500;
+  letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--text-muted); margin-bottom: 6px;
 }
 .field {
-  width: 100%; height: 40px; padding: 0 12px;
-  background: var(--surface); color: var(--text);
-  border: 1px solid var(--border); border-radius: 8px;
-  font-size: 14px; outline: none; transition: border-color 120ms;
+  width: 100%;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 12px;
+  height: 42px;
+  font-size: 15px;
+  line-height: 1.4;
+  transition: border-color 120ms, box-shadow 120ms, background 120ms;
+  appearance: none;
+  -webkit-appearance: none;
 }
-.field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); }
-.field-prefixed { padding-left: 36px; }
-textarea.field { height: auto; padding-top: 10px; padding-bottom: 10px; }
-.help { color: var(--text-muted); font-size: 11.5px; margin-top: 6px; }
+:root[data-theme="dark"] .field { background: #0F1016; }
+.field::placeholder { color: var(--text-muted); }
+.field:hover { border-color: color-mix(in oklab, var(--text-muted) 35%, var(--border)); }
+.field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--ring-soft); }
+.field-prefixed { padding-left: 38px; }
+textarea.field { padding: 10px 12px; height: auto; min-height: 88px; resize: vertical; line-height: 1.5; }
+select.field {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238B8E9A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+.help { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
+
+/* Section card (header + body) */
+.section-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+/* Segmented control */
+.seg {
+  display: inline-flex; align-items: center; gap: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px;
+  width: 100%;
+}
+.seg button {
+  flex: 1; height: 32px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 500;
+  color: var(--text-muted);
+  transition: background 120ms, color 120ms;
+  white-space: nowrap;
+}
+.seg button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+  font-weight: 600;
+}
+
+/* Sticky bottom bar */
+.sticky-bar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
+  background: color-mix(in oklab, var(--bg) 88%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Collapsible chevron */
+.chev { transition: transform 180ms ease; }
+.chev[data-open="true"] { transform: rotate(90deg); }
+
+/* Dropdown menu */
+.menu {
+  position: absolute; z-index: 40;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.menu-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 13.5px; cursor: pointer; }
+.menu-item:hover { background: var(--surface-2); }
+.menu-item[data-on="true"] { background: color-mix(in oklab, var(--accent) 10%, transparent); }
+
+/* Tabs (used on Ride Detail) */
+.tabs {
+  display: flex; gap: 4px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tab {
+  position: relative;
+  padding: 10px 14px 12px;
+  font-size: 13px; font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: color 120ms;
+  border: 0; background: transparent; cursor: pointer;
+}
+.tab[aria-selected="true"] {
+  color: var(--text);
+  font-weight: 600;
+}
+.tab[aria-selected="true"]::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px;
+  height: 2px; background: var(--accent); border-radius: 2px;
+}
+
+/* Pre block for copy-ready content */
+.copy-block {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+}
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+/* Mini-map placeholder */
+.map {
+  position: relative;
+  background:
+    radial-gradient(at 20% 20%, color-mix(in oklab, var(--accent) 6%, transparent), transparent 50%),
+    radial-gradient(at 80% 80%, color-mix(in oklab, var(--accent) 4%, transparent), transparent 50%),
+    var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
 
 /* Custom focus ring */
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
