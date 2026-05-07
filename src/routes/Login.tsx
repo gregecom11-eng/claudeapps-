@@ -40,7 +40,7 @@ export function Login() {
     e.preventDefault();
     const cleaned = code.replace(/\D/g, "");
     if (cleaned.length < 6) {
-      setError("Enter the 6-digit code from your email.");
+      setError("Enter the code from your email (6 to 8 digits).");
       return;
     }
     setStatus("verifying");
@@ -79,8 +79,8 @@ export function Login() {
           </div>
           <div className="text-sm text-muted">
             {step === "email"
-              ? "Enter your email — we'll send you a 6-digit code."
-              : "Enter the 6-digit code we just emailed you."}
+              ? "Enter your email — we'll send you a sign-in code."
+              : "Enter the code we just emailed you."}
           </div>
         </div>
 
@@ -123,8 +123,8 @@ export function Login() {
               style={{ fontSize: 12.5, lineHeight: 1.5 }}
             >
               Sent to <span className="text-text">{email}</span>. Enter
-              the 6-digit code below — works the same as the link, and
-              keeps you signed in to this app.
+              the code below — works the same as the link, and keeps
+              you signed in to this app.
             </div>
             <label className="block text-sm space-y-1">
               <span className="text-muted">Code</span>
@@ -133,14 +133,14 @@ export function Login() {
                 inputMode="numeric"
                 pattern="[0-9]*"
                 autoComplete="one-time-code"
-                maxLength={6}
+                maxLength={8}
                 required
-                className="input tabular tracking-[0.4em] text-center"
+                className="input tabular tracking-[0.3em] text-center"
                 style={{ fontSize: 22, fontWeight: 600 }}
-                placeholder="000000"
+                placeholder="••••••"
                 value={code}
                 onChange={(e) =>
-                  setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+                  setCode(e.target.value.replace(/\D/g, "").slice(0, 8))
                 }
               />
             </label>
