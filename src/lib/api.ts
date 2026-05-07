@@ -53,12 +53,24 @@ export async function upsertRide(ride: Partial<Ride>): Promise<Ride> {
 export async function updateRideStatus(
   id: string,
   status: Ride["status"],
-): Promise<void> {
-  const { error } = await supabase
+): Promise<Ride> {
+  // Use .select().single() so a 0-row update (RLS rejection, wrong id,
+  // etc.) raises an error instead of silently succeeding.
+  const { data, error } = await supabase
     .from("rides")
     .update({ status })
-    .eq("id", id);
-  if (error) throw error;
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) {
+    if (error.code === "PGRST116") {
+      throw new Error(
+        "Update was blocked — likely a permissions or trigger issue.",
+      );
+    }
+    throw error;
+  }
+  return data as Ride;
 }
 
 export async function deleteRide(id: string): Promise<void> {
