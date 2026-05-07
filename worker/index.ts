@@ -6,9 +6,16 @@
 //                                   personal-account custom connectors)
 //   anything else                → static asset fallthrough (the dashboard SPA)
 
+import { runScheduled } from "./cron";
 import { handleGenerateRequest } from "./generate";
 import { handleInviteRequest } from "./invite";
 import { handleMcpRequest } from "./mcp";
+import {
+  handleSubscribe,
+  handleUnsubscribe,
+  handleVapidPublic,
+  handleVapidSetup,
+} from "./push";
 
 export type Env = {
   ASSETS: Fetcher;
@@ -17,6 +24,9 @@ export type Env = {
   MCP_API_KEY: string;
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_MODEL?: string;
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
 };
 
 export default {
@@ -41,6 +51,44 @@ export default {
         );
       }
       return handleInviteRequest(request, env);
+    }
+
+    // Push notifications (Web Push)
+    if (url.pathname === "/api/push/vapid-public") {
+      if (request.method !== "GET")
+        return Response.json(
+          { error: "method not allowed" },
+          { status: 405, headers: corsHeaders() },
+        );
+      return handleVapidPublic(env);
+    }
+    if (url.pathname === "/api/push/vapid-setup") {
+      if (request.method !== "GET")
+        return Response.json(
+          { error: "method not allowed" },
+          { status: 405, headers: corsHeaders() },
+        );
+      return handleVapidSetup(request, env);
+    }
+    if (url.pathname === "/api/push/subscribe") {
+      if (request.method === "OPTIONS")
+        return new Response(null, { status: 204, headers: corsHeaders() });
+      if (request.method !== "POST")
+        return Response.json(
+          { error: "method not allowed" },
+          { status: 405, headers: corsHeaders() },
+        );
+      return handleSubscribe(request, env);
+    }
+    if (url.pathname === "/api/push/unsubscribe") {
+      if (request.method === "OPTIONS")
+        return new Response(null, { status: 204, headers: corsHeaders() });
+      if (request.method !== "POST")
+        return Response.json(
+          { error: "method not allowed" },
+          { status: 405, headers: corsHeaders() },
+        );
+      return handleUnsubscribe(request, env);
     }
 
     // Owner-only: generate ride packet text via Anthropic.
@@ -100,6 +148,17 @@ export default {
 
     // Everything else → the dashboard SPA / its assets.
     return env.ASSETS.fetch(request);
+  },
+
+  // Cloudflare cron trigger (see wrangler.jsonc → triggers.crons).
+  // Sends pickup-reminder pushes to drivers ~90 min before each ride
+  // and notifies owners when a /book request lands.
+  async scheduled(
+    _event: ScheduledEvent,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    ctx.waitUntil(runScheduled(env));
   },
 };
 

@@ -21,6 +21,46 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Web Push: show a notification when one arrives.
+self.addEventListener("push", (event) => {
+  let payload = { title: "SDLuxury", body: "" };
+  try {
+    if (event.data) payload = event.data.json();
+  } catch {
+    if (event.data) payload = { title: "SDLuxury", body: event.data.text() };
+  }
+  const opts = {
+    body: payload.body,
+    icon: "./icon.svg",
+    badge: "./icon.svg",
+    tag: payload.tag,
+    data: { url: payload.url || "/" },
+    requireInteraction: false,
+  };
+  event.waitUntil(
+    self.registration.showNotification(payload.title || "SDLuxury", opts),
+  );
+});
+
+// Click → focus an existing tab (or open a new one) at payload.url.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((cs) => {
+        for (const c of cs) {
+          if ("focus" in c) {
+            c.navigate(url);
+            return c.focus();
+          }
+        }
+        return self.clients.openWindow(url);
+      }),
+  );
+});
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);

@@ -15,6 +15,7 @@ import { downloadICS } from "../lib/calendar";
 import { BUSINESS_TZ, fmtDate, fmtMoney, fmtTime } from "../lib/format";
 import { Avatar } from "../components/Avatar";
 import { Icon, type IconName } from "../components/Icon";
+import { PushToggle } from "../components/PushToggle";
 import { StatusBadge } from "../components/StatusBadge";
 import type {
   Driver as DriverType,
@@ -1333,6 +1334,8 @@ export function DriverProfile() {
           </button>
         </div>
       </div>
+
+      <PushToggle hint="Get a heads-up 90 minutes before each ride. Tap a notification to jump to the briefing." />
     </div>
   );
 }

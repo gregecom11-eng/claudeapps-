@@ -18,6 +18,7 @@ import {
 import { useAuth } from "../lib/auth";
 import { Avatar } from "../components/Avatar";
 import { Icon, type IconName } from "../components/Icon";
+import { PushToggle } from "../components/PushToggle";
 import type {
   BillingTerms,
   Client,
@@ -233,6 +234,9 @@ function AccountSection({ flash }: { flash: (m: string) => void }) {
         <PrimaryBtn onClick={save} disabled={!dirty || saving}>
           {saving ? "Saving…" : "Save changes"}
         </PrimaryBtn>
+      </div>
+      <div className="p-5" style={{ borderTop: "1px solid var(--border)" }}>
+        <PushToggle hint="Get pinged when a /book request lands and when a ride status changes." />
       </div>
     </Section>
   );

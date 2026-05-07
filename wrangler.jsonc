@@ -9,7 +9,12 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  "triggers": {
+    // Every 5 minutes — checks for upcoming rides + new bookings
+    // and sends Web Push reminders. No-ops when VAPID secrets aren't set.
+    "crons": ["*/5 * * * *"]
+  }
 
   // Secrets (set in Cloudflare dashboard → Settings → Variables and Secrets):
   //   SUPABASE_URL
