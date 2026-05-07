@@ -184,6 +184,38 @@ export async function listAllVehicles(): Promise<Vehicle[]> {
   return data ?? [];
 }
 
+// ── Client (current user, scoped) ──────────────────────────────────
+export async function claimClientByEmail(): Promise<Client | null> {
+  const { data, error } = await supabase.rpc("claim_client_by_email");
+  if (error) throw error;
+  return (data as Client | null) ?? null;
+}
+
+// ── Public booking submission (no auth required) ────────────────
+export async function submitBookingRequest(input: {
+  passenger_name: string;
+  passenger_phone?: string;
+  passenger_email?: string;
+  pickup_at: string; // ISO
+  pickup_address: string;
+  dropoff_address?: string;
+  trip_type?: string;
+  notes?: string;
+}): Promise<string> {
+  const { data, error } = await supabase.rpc("submit_booking_request", {
+    p_passenger_name: input.passenger_name,
+    p_passenger_phone: input.passenger_phone ?? "",
+    p_passenger_email: input.passenger_email ?? "",
+    p_pickup_at: input.pickup_at,
+    p_pickup_address: input.pickup_address,
+    p_dropoff_address: input.dropoff_address ?? "",
+    p_trip_type: input.trip_type ?? "",
+    p_notes: input.notes ?? "",
+  });
+  if (error) throw error;
+  return data as string;
+}
+
 // ── Driver (current user, scoped) ──────────────────────────────────
 // Calls the security-definer RPC to link the current auth user to a
 // drivers row by matching email. Returns the linked driver, or null if

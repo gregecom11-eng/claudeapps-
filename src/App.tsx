@@ -1,7 +1,10 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
+import { ClientShell } from "./components/ClientShell";
 import { DriverShell } from "./components/DriverShell";
 import { useAuth, AuthProvider } from "./lib/auth";
+import { Book } from "./routes/Book";
+import { Client } from "./routes/Client";
 import { Login } from "./routes/Login";
 import { Dashboard } from "./routes/Dashboard";
 import { Driver, DriverPast, DriverProfile } from "./routes/Driver";
@@ -19,7 +22,12 @@ export function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Gate />
+        <Routes>
+          {/* Public: anyone (no auth) can land on /book */}
+          <Route path="/book" element={<Book />} />
+          {/* Everything else goes through the auth + role gate */}
+          <Route path="/*" element={<Gate />} />
+        </Routes>
       </BrowserRouter>
     </AuthProvider>
   );
@@ -42,18 +50,30 @@ function Gate() {
     );
   }
 
-  // Drivers get a stripped-down mobile-first shell with just their day.
-  // Owners get the full operations dashboard. Default to owner shell if
-  // the profile hasn't loaded yet (small flash) or for unknown roles.
-  const isDriver = profile?.role === "driver";
+  // Role-based shells:
+  //   driver → DriverShell (today / past / profile)
+  //   client → ClientShell (your account home)
+  //   anything else (owner) → AppShell (full ops dashboard)
+  const role = profile?.role;
 
-  if (isDriver) {
+  if (role === "driver") {
     return (
       <Routes>
         <Route element={<DriverShell />}>
           <Route index element={<Driver />} />
           <Route path="past" element={<DriverPast />} />
           <Route path="profile" element={<DriverProfile />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    );
+  }
+
+  if (role === "client") {
+    return (
+      <Routes>
+        <Route element={<ClientShell />}>
+          <Route index element={<Client />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

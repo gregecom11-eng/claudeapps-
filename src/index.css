@@ -47,6 +47,8 @@ body {
 
 /* ── Helper classes used by the design components ─────────────────── */
 .tnum         { font-variant-numeric: tabular-nums; }
+.serif        { font-family: 'Cormorant Garamond', 'Times New Roman', Georgia, serif; font-weight: 500; }
+.eyebrow      { font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 500; color: var(--text-muted); }
 .surface      { background: var(--surface); border: 1px solid var(--border); }
 .surface-2    { background: var(--surface-2); border: 1px solid var(--border); }
 .hairline     { border-color: var(--border); }
