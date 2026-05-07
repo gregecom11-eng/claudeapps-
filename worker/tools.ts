@@ -4,53 +4,41 @@
 import type { Env } from "./index";
 import { adminClient } from "./supabase";
 
-// ── Tool schemas exposed to Claude ────────────────────────────────────
 export const TOOL_SCHEMAS = [
   {
     name: "create_ride",
     description:
-      "Schedule a new ride in the SDLuxury Operations dashboard. Use this when the user describes a ride they want to add — even if not all details are provided. The ride appears immediately on the owner dashboard. Always confirm pickup_at and pickup_address with the user before calling.",
+      "Schedule a new ride in the SDLuxury Operations dashboard. Use this when the user describes a ride they want to add. The ride appears immediately on the owner dashboard. Always confirm pickup_at and pickup_address before calling.",
     inputSchema: {
       type: "object",
       properties: {
-        passenger_name: { type: "string", description: "Full passenger name." },
-        passenger_phone: {
-          type: "string",
-          description: "Passenger phone (optional).",
-        },
+        passenger_name: { type: "string" },
+        passenger_phone: { type: "string" },
         client_name: {
           type: "string",
           description:
-            "Recurring client to link this ride to (e.g. 'Kevin Morgan'). If a client with this name exists, the ride is linked. If not, the ride is created without a client link.",
+            "Recurring client to link this ride to. If a client with this name exists, the ride is linked.",
         },
         pickup_at: {
           type: "string",
           description:
-            "Pickup date and time in ISO 8601 (e.g. '2026-04-29T07:15:00-07:00'). If the user gives a relative time ('tomorrow 7am'), resolve it to an absolute time in America/Los_Angeles before calling.",
+            "ISO 8601 datetime, e.g. '2026-04-29T07:15:00-07:00'. Resolve relative times to absolute in America/Los_Angeles before calling.",
         },
-        pickup_address: { type: "string", description: "Pickup address." },
-        dropoff_address: {
-          type: "string",
-          description: "Dropoff address (optional).",
-        },
-        flight_airline: { type: "string", description: "Optional airline." },
-        flight_number: { type: "string", description: "Optional flight #." },
-        flight_airport: {
-          type: "string",
-          description: "Airport code (e.g. LAX).",
-        },
-        flight_terminal: { type: "string", description: "Terminal." },
+        pickup_address: { type: "string" },
+        dropoff_address: { type: "string" },
+        flight_airline: { type: "string" },
+        flight_number: { type: "string" },
+        flight_airport: { type: "string" },
+        flight_terminal: { type: "string" },
         driver_name: {
           type: "string",
-          description:
-            "Driver name to assign — fuzzy-matched against the active drivers list (Greg, Hassan, David Santiago, etc.). Use list_drivers if unsure.",
+          description: "Driver name; fuzzy-matched. Use list_drivers if unsure.",
         },
         vehicle_name: {
           type: "string",
-          description:
-            "Vehicle to assign — fuzzy-matched against the fleet. Use list_vehicles if unsure.",
+          description: "Vehicle; fuzzy-matched. Use list_vehicles if unsure.",
         },
-        fare_dollars: { type: "number", description: "Base fare in dollars." },
+        fare_dollars: { type: "number" },
         gratuity_dollars: { type: "number" },
         parking_dollars: { type: "number" },
         billing_terms: {
@@ -64,7 +52,7 @@ export const TOOL_SCHEMAS = [
             "company_billing",
           ],
         },
-        notes: { type: "string", description: "Internal/driver notes." },
+        notes: { type: "string" },
       },
       required: ["passenger_name", "pickup_at", "pickup_address"],
     },
@@ -72,15 +60,11 @@ export const TOOL_SCHEMAS = [
   {
     name: "list_rides",
     description:
-      "Return rides on a given date or range. Use 'today', 'tomorrow', 'this_week', or an explicit YYYY-MM-DD. Optional status filter.",
+      "Return rides on a date or range. Use 'today', 'tomorrow', 'this_week', 'next_week', or YYYY-MM-DD. Optional status filter.",
     inputSchema: {
       type: "object",
       properties: {
-        date: {
-          type: "string",
-          description:
-            "'today' | 'tomorrow' | 'this_week' | 'next_week' | YYYY-MM-DD",
-        },
+        date: { type: "string" },
         status: {
           type: "string",
           enum: [
@@ -91,26 +75,20 @@ export const TOOL_SCHEMAS = [
             "cancelled",
           ],
         },
-        limit: { type: "integer", default: 50 },
+        limit: { type: "integer" },
       },
     },
   },
   {
     name: "update_ride_status",
     description:
-      "Change a ride's status (e.g. mark in progress / completed / cancelled). Identify the ride by id, or by passenger_name + date.",
+      "Change a ride's status. Identify by ride_id (UUID), or by passenger_name + date.",
     inputSchema: {
       type: "object",
       properties: {
-        ride_id: { type: "string", description: "Exact UUID if known." },
-        passenger_name: {
-          type: "string",
-          description: "Passenger name (used with date if no id given).",
-        },
-        date: {
-          type: "string",
-          description: "YYYY-MM-DD or 'today' / 'tomorrow' (used with passenger_name).",
-        },
+        ride_id: { type: "string" },
+        passenger_name: { type: "string" },
+        date: { type: "string" },
         new_status: {
           type: "string",
           enum: [
@@ -128,7 +106,7 @@ export const TOOL_SCHEMAS = [
   {
     name: "find_or_create_client",
     description:
-      "Look up a recurring client by name. If not found, create them and return the new record. Useful before create_ride when the user mentions a new repeat client.",
+      "Look up a recurring client by name. If not found, create them and return the new record.",
     inputSchema: {
       type: "object",
       properties: {
@@ -164,17 +142,13 @@ export const TOOL_SCHEMAS = [
   {
     name: "log_activity",
     description:
-      "Append a free-form note to the dashboard's activity feed. Use this to leave a breadcrumb when something noteworthy happens that isn't a ride status change (e.g. 'Heartbeat: EJA 812 slipped to 14:45').",
+      "Append a free-form note to the dashboard's activity feed.",
     inputSchema: {
       type: "object",
       properties: {
         message: { type: "string" },
         ride_id: { type: "string" },
-        source: {
-          type: "string",
-          description:
-            "Where the note came from. Defaults to 'mcp' (this connector).",
-        },
+        source: { type: "string" },
       },
       required: ["message"],
     },
@@ -183,7 +157,6 @@ export const TOOL_SCHEMAS = [
 
 type ToolName = (typeof TOOL_SCHEMAS)[number]["name"];
 
-// ── Executor ──────────────────────────────────────────────────────────
 export async function executeTool(
   name: string,
   args: Record<string, unknown>,
@@ -203,9 +176,9 @@ export async function executeTool(
       case "find_or_create_client":
         return ok(await findOrCreateClient(args, env));
       case "list_drivers":
-        return ok(await listDrivers(env));
+        return ok(await listDriversTool(env));
       case "list_vehicles":
-        return ok(await listVehicles(env));
+        return ok(await listVehiclesTool(env));
       case "log_activity":
         return ok(await logActivity(args, env));
       default:
@@ -217,9 +190,7 @@ export async function executeTool(
 }
 
 const ok = (data: unknown) => ({
-  content: [
-    { type: "text" as const, text: JSON.stringify(data, null, 2) },
-  ],
+  content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
 });
 const err = (msg: string) => ({
   content: [{ type: "text" as const, text: `Error: ${msg}` }],
@@ -247,10 +218,9 @@ function resolveDateRange(
 ): { from: string; to: string } | null {
   if (!date) return null;
   const tz = "America/Los_Angeles";
-  const today = new Date();
-  // Build a "now" anchored to LA time roughly — for ranges this is good enough.
-  const anchor = new Date(today.toLocaleString("en-US", { timeZone: tz }));
-
+  const anchor = new Date(
+    new Date().toLocaleString("en-US", { timeZone: tz }),
+  );
   const startOfDay = (d: Date) => {
     const x = new Date(d);
     x.setHours(0, 0, 0, 0);
@@ -278,13 +248,10 @@ function resolveDateRange(
     return { from: start.toISOString(), to: end.toISOString() };
   }
   if (date === "next_week") {
-    const start = startOfDay(
-      new Date(anchor.getTime() + 7 * 86_400_000),
-    );
+    const start = startOfDay(new Date(anchor.getTime() + 7 * 86_400_000));
     const end = endOfDay(new Date(start.getTime() + 6 * 86_400_000));
     return { from: start.toISOString(), to: end.toISOString() };
   }
-  // Treat as YYYY-MM-DD
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (m) {
     const [, y, mo, d] = m;
@@ -295,10 +262,7 @@ function resolveDateRange(
   return null;
 }
 
-async function findDriverByName(
-  env: Env,
-  name: string,
-): Promise<{ id: string; full_name: string } | null> {
+async function findDriverByName(env: Env, name: string) {
   const sb = adminClient(env);
   const { data } = await sb
     .from("drivers")
@@ -306,19 +270,17 @@ async function findDriverByName(
     .eq("active", true);
   if (!data) return null;
   const lower = name.toLowerCase();
-  // Exact, contains, or first-word match
-  let match = data.find((d) => d.full_name.toLowerCase() === lower);
-  match = match || data.find((d) => d.full_name.toLowerCase().includes(lower));
-  match =
-    match ||
-    data.find((d) => d.full_name.toLowerCase().split(/\W+/).includes(lower));
-  return match ?? null;
+  return (
+    data.find((d) => d.full_name.toLowerCase() === lower) ??
+    data.find((d) => d.full_name.toLowerCase().includes(lower)) ??
+    data.find((d) =>
+      d.full_name.toLowerCase().split(/\W+/).includes(lower),
+    ) ??
+    null
+  );
 }
 
-async function findVehicleByName(
-  env: Env,
-  name: string,
-): Promise<{ id: string; display_name: string } | null> {
+async function findVehicleByName(env: Env, name: string) {
   const sb = adminClient(env);
   const { data } = await sb
     .from("vehicles")
@@ -334,10 +296,7 @@ async function findVehicleByName(
   );
 }
 
-async function findClientByName(
-  env: Env,
-  name: string,
-): Promise<{ id: string; name: string } | null> {
+async function findClientByName(env: Env, name: string) {
   const sb = adminClient(env);
   const { data } = await sb
     .from("clients")
@@ -357,7 +316,6 @@ async function createRide(args: Record<string, unknown>, env: Env) {
       "passenger_name, pickup_at, and pickup_address are required.",
     );
   }
-  // Validate ISO date.
   const t = new Date(pickup_at);
   if (Number.isNaN(t.getTime())) {
     throw new Error(`pickup_at is not a valid ISO 8601 datetime: ${pickup_at}`);
@@ -372,22 +330,20 @@ async function createRide(args: Record<string, unknown>, env: Env) {
   let driver_id: string | null = null;
   if (s(args.driver_name)) {
     const d = await findDriverByName(env, s(args.driver_name)!);
-    if (!d) {
+    if (!d)
       throw new Error(
-        `Driver '${args.driver_name}' not found. Use list_drivers to see options.`,
+        `Driver '${args.driver_name}' not found. Use list_drivers.`,
       );
-    }
     driver_id = d.id;
   }
 
   let vehicle_id: string | null = null;
   if (s(args.vehicle_name)) {
     const v = await findVehicleByName(env, s(args.vehicle_name)!);
-    if (!v) {
+    if (!v)
       throw new Error(
-        `Vehicle '${args.vehicle_name}' not found. Use list_vehicles to see options.`,
+        `Vehicle '${args.vehicle_name}' not found. Use list_vehicles.`,
       );
-    }
     vehicle_id = v.id;
   }
 
@@ -490,7 +446,10 @@ async function updateRideStatus(args: Record<string, unknown>, env: Env) {
     if (data.length > 1)
       throw new Error(
         `Multiple rides match '${passenger_name}'. Pass ride_id explicitly: ${data
-          .map((r) => `${r.id} (${new Date(r.pickup_at).toLocaleString()})`)
+          .map(
+            (r) =>
+              `${r.id} (${new Date(r.pickup_at).toLocaleString()})`,
+          )
           .join(", ")}`,
       );
     ride_id = data[0].id;
@@ -538,7 +497,7 @@ async function findOrCreateClient(args: Record<string, unknown>, env: Env) {
   return { found: false, created: true, client: data };
 }
 
-async function listDrivers(env: Env) {
+async function listDriversTool(env: Env) {
   const sb = adminClient(env);
   const { data, error } = await sb
     .from("drivers")
@@ -549,7 +508,7 @@ async function listDrivers(env: Env) {
   return { drivers: data ?? [] };
 }
 
-async function listVehicles(env: Env) {
+async function listVehiclesTool(env: Env) {
   const sb = adminClient(env);
   const { data, error } = await sb
     .from("vehicles")

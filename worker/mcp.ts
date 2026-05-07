@@ -1,15 +1,7 @@
 // Minimal MCP server speaking JSON-RPC 2.0 over HTTP.
-// Implements just enough for Claude.ai's "Custom Connector" UX:
-//   - initialize          (handshake; returns server info + capabilities)
-//   - notifications/*     (no-ops; we ack)
-//   - ping                (returns {})
-//   - tools/list          (returns the tool catalog)
-//   - tools/call          (invokes a named tool)
-//
-// We deliberately avoid the @modelcontextprotocol/sdk Node-isms so this
-// stays small and Workers-native.
+// Handles initialize, tools/list, tools/call, plus list-stubs Claude probes.
 
-import { json, type Env, corsHeaders } from "./index";
+import { corsHeaders, type Env } from "./index";
 import { TOOL_SCHEMAS, executeTool } from "./tools";
 
 type JsonRpcReq = {
@@ -20,11 +12,7 @@ type JsonRpcReq = {
 };
 
 type JsonRpcRes =
-  | {
-      jsonrpc: "2.0";
-      id: string | number | null;
-      result: unknown;
-    }
+  | { jsonrpc: "2.0"; id: string | number | null; result: unknown }
   | {
       jsonrpc: "2.0";
       id: string | number | null;
@@ -32,7 +20,7 @@ type JsonRpcRes =
     };
 
 const PROTOCOL_VERSION = "2024-11-05";
-const SERVER_INFO = { name: "sdluxury-mcp", version: "0.1.0" };
+const SERVER_INFO = { name: "sdluxury-ops", version: "0.2.0" };
 
 export async function handleMcpRequest(
   request: Request,
@@ -42,36 +30,22 @@ export async function handleMcpRequest(
   try {
     body = await request.json();
   } catch {
-    return jsonRpcError(null, -32700, "Parse error");
+    return jsonResponse(errorRes(null, -32700, "Parse error"));
   }
 
-  // Handle batched requests (rare but spec'd).
   if (Array.isArray(body)) {
     const responses = await Promise.all(
       body.map((req) => handleSingle(req as JsonRpcReq, env)),
     );
     const filtered = responses.filter((r): r is JsonRpcRes => r !== null);
-    return new Response(JSON.stringify(filtered), {
-      status: 200,
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-        ...corsHeaders(),
-      },
-    });
+    return jsonResponse(filtered);
   }
 
   const res = await handleSingle(body as JsonRpcReq, env);
   if (res === null) {
-    // Notification — no body, 202 Accepted.
     return new Response(null, { status: 202, headers: corsHeaders() });
   }
-  return new Response(JSON.stringify(res), {
-    status: 200,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      ...corsHeaders(),
-    },
-  });
+  return jsonResponse(res);
 }
 
 async function handleSingle(
@@ -81,8 +55,6 @@ async function handleSingle(
   if (!req || req.jsonrpc !== "2.0" || typeof req.method !== "string") {
     return errorRes(req?.id ?? null, -32600, "Invalid Request");
   }
-
-  // Notifications have no id; we don't reply (return null → 202 Accepted).
   const isNotification = req.id === undefined || req.id === null;
 
   try {
@@ -91,19 +63,16 @@ async function handleSingle(
         return okRes(req.id ?? null, {
           protocolVersion: PROTOCOL_VERSION,
           serverInfo: SERVER_INFO,
-          capabilities: {
-            tools: { listChanged: false },
-            // resources/prompts/sampling not implemented.
-          },
+          capabilities: { tools: { listChanged: false } },
           instructions:
-            "SDLuxury Operations server. Use create_ride to schedule rides, list_rides to view the schedule, update_ride_status to mark progress. Always confirm pickup_at and pickup_address from the user before creating a ride.",
+            "SDLuxury Operations server. Use create_ride to schedule rides; list_rides to view the schedule; update_ride_status to mark progress. Always confirm pickup_at and pickup_address with the user before creating a ride.",
         });
 
       case "notifications/initialized":
       case "notifications/cancelled":
       case "notifications/progress":
       case "notifications/roots/list_changed":
-        return null; // ack
+        return null;
 
       case "ping":
         return okRes(req.id ?? null, {});
@@ -116,16 +85,17 @@ async function handleSingle(
           name?: string;
           arguments?: Record<string, unknown>;
         };
-        const name = params.name;
-        const args = params.arguments ?? {};
-        if (!name) {
+        if (!params.name) {
           return errorRes(req.id ?? null, -32602, "Missing tool name");
         }
-        const result = await executeTool(name, args, env);
+        const result = await executeTool(
+          params.name,
+          params.arguments ?? {},
+          env,
+        );
         return okRes(req.id ?? null, result);
       }
 
-      // resources/list, prompts/list etc. — return empty so clients don't error.
       case "resources/list":
         return okRes(req.id ?? null, { resources: [] });
       case "resources/templates/list":
@@ -142,8 +112,8 @@ async function handleSingle(
         );
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
     if (isNotification) return null;
+    const msg = e instanceof Error ? e.message : String(e);
     return errorRes(req.id ?? null, -32603, msg);
   }
 }
@@ -161,10 +131,12 @@ function errorRes(
   return { jsonrpc: "2.0", id, error: { code, message, data } };
 }
 
-function jsonRpcError(
-  id: string | number | null,
-  code: number,
-  message: string,
-): Response {
-  return json(errorRes(id, code, message));
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      ...corsHeaders(),
+    },
+  });
 }
