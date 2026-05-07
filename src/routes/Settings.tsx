@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import {
   deleteClient,
   exportSnapshot,
+  generateInviteLink,
   listAllDrivers,
   listAllVehicles,
   listClients,
-  sendDriverInvite,
   setDriverActive,
   setVehicleActive,
   updateMyProfile,
@@ -241,6 +241,10 @@ function DriversSection({ flash }: { flash: (m: string) => void }) {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ full_name: "", phone: "", email: "" });
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [invite, setInvite] = useState<{
+    driver: Driver;
+    link: string;
+  } | null>(null);
 
   const reload = () => listAllDrivers().then(setDrivers);
   useEffect(() => {
@@ -287,14 +291,14 @@ function DriversSection({ flash }: { flash: (m: string) => void }) {
     }
   };
 
-  const invite = async (d: Driver) => {
+  const inviteDriver = async (d: Driver) => {
     if (!d.email) {
       flash("Add an email for this driver first.");
       return;
     }
     try {
-      await sendDriverInvite(d.email);
-      flash(`Magic link sent to ${d.email}`);
+      const { action_link } = await generateInviteLink(d.email);
+      setInvite({ driver: d, link: action_link });
     } catch (err) {
       flash(err instanceof Error ? err.message : "Invite failed");
     }
@@ -375,12 +379,174 @@ function DriversSection({ flash }: { flash: (m: string) => void }) {
               onCancelEdit={() => setEditingId(null)}
               onSave={(patch) => save(d, patch)}
               onToggle={() => toggleActive(d)}
-              onInvite={() => invite(d)}
+              onInvite={() => inviteDriver(d)}
             />
           ))
         )}
       </ul>
+      {invite ? (
+        <InviteModal
+          driver={invite.driver}
+          link={invite.link}
+          onClose={() => setInvite(null)}
+          onCopied={() => flash("Link copied")}
+        />
+      ) : null}
     </Section>
+  );
+}
+
+function InviteModal({
+  driver,
+  link,
+  onClose,
+  onCopied,
+}: {
+  driver: Driver;
+  link: string;
+  onClose: () => void;
+  onCopied: () => void;
+}) {
+  const firstName = driver.full_name.split(/\s+/)[0].replace(/[(),]/g, "");
+  const smsBody = `Hi ${firstName}, here's your SDLuxury driver app sign-in link. It's single-use and expires soon. ${link}`;
+  // ?body= works on both iOS 15+ and Android.
+  const smsHref = driver.phone
+    ? `sms:${driver.phone}?body=${encodeURIComponent(smsBody)}`
+    : null;
+  const waHref = driver.phone
+    ? `https://wa.me/${driver.phone.replace(/[^\d]/g, "")}?text=${encodeURIComponent(smsBody)}`
+    : null;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard?.writeText(link);
+      onCopied();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-end md:items-center justify-center"
+      style={{ background: "color-mix(in oklab, #000 50%, transparent)" }}
+      onClick={onClose}
+    >
+      <div
+        className="surface rounded-t-[16px] md:rounded-[16px] w-full md:max-w-[520px]"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          paddingBottom: "max(env(safe-area-inset-bottom), 16px)",
+        }}
+      >
+        <div
+          className="px-5 pt-4 pb-3 flex items-start justify-between gap-3"
+          style={{ borderBottom: "1px solid var(--border)" }}
+        >
+          <div className="min-w-0">
+            <div className="text-muted" style={{ fontSize: 12.5 }}>
+              Sign-in link for
+            </div>
+            <h2
+              className="truncate"
+              style={{
+                fontSize: 18,
+                fontWeight: 600,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              {driver.full_name}
+            </h2>
+            <div
+              className="text-muted truncate"
+              style={{ fontSize: 12 }}
+            >
+              {driver.email}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="inline-grid place-items-center"
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              color: "var(--text-muted)",
+            }}
+          >
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-3">
+          <div
+            className="rounded-[8px] px-3 py-2 mono"
+            style={{
+              background: "var(--surface-2)",
+              border: "1px solid var(--border)",
+              fontSize: 12,
+              wordBreak: "break-all",
+              maxHeight: 120,
+              overflowY: "auto",
+            }}
+          >
+            {link}
+          </div>
+          <p
+            className="text-muted"
+            style={{ fontSize: 12.5, lineHeight: 1.5 }}
+          >
+            Single-use, expires in ~1 hour. Send it to {firstName} via text,
+            iMessage, WhatsApp, or any channel — when they click it from
+            their phone they're signed in and the driver app loads.
+          </p>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              onClick={copy}
+              className="inline-flex items-center justify-center gap-2 h-10 rounded-[8px] text-[14px] font-semibold"
+              style={{
+                background: "var(--accent)",
+                color: "#15161B",
+                border: "1px solid var(--accent-strong)",
+              }}
+            >
+              <Icon name="copy" size={14} /> Copy link
+            </button>
+            {smsHref ? (
+              <a
+                href={smsHref}
+                className="inline-flex items-center justify-center gap-2 h-10 rounded-[8px] text-[14px] font-medium"
+                style={{
+                  background: "transparent",
+                  color: "var(--text)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                <Icon name="phone" size={14} /> Send via SMS
+              </a>
+            ) : null}
+            {waHref ? (
+              <a
+                href={waHref}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center justify-center gap-2 h-10 rounded-[8px] text-[14px] font-medium sm:col-span-2"
+                style={{
+                  background: "transparent",
+                  color: "var(--text)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                <Icon name="phone" size={14} /> Send via WhatsApp
+              </a>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

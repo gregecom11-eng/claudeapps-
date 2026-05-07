@@ -6,6 +6,7 @@
 //                                   personal-account custom connectors)
 //   anything else                → static asset fallthrough (the dashboard SPA)
 
+import { handleInviteRequest } from "./invite";
 import { handleMcpRequest } from "./mcp";
 
 export type Env = {
@@ -21,6 +22,22 @@ export default {
 
     if (url.pathname === "/health") {
       return Response.json({ ok: true, service: "claudeapps-1" });
+    }
+
+    // Owner-only: generate a magic-link sign-in URL for a driver/client.
+    // Doesn't email — returns the link so the caller can share it via SMS,
+    // WhatsApp, etc. Avoids the Supabase free-tier email rate limit.
+    if (url.pathname === "/api/invite") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders() });
+      }
+      if (request.method !== "POST") {
+        return Response.json(
+          { error: "method not allowed" },
+          { status: 405, headers: corsHeaders() },
+        );
+      }
+      return handleInviteRequest(request, env);
     }
 
     // /api/mcp        (uses Authorization header)

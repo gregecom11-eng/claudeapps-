@@ -188,14 +188,36 @@ export async function claimDriverByEmail(): Promise<Driver | null> {
 // "My today" / "my tomorrow" rely on RLS — RLS is what scopes the rows
 // to the current driver. The same listRides() works.
 
-// Send a magic-link invite to a (would-be) driver's email. The Supabase
-// auth Site URL config controls where they land.
-export async function sendDriverInvite(email: string): Promise<void> {
-  const { error } = await supabase.auth.signInWithOtp({
-    email: email.trim(),
-    options: { emailRedirectTo: `${window.location.origin}/` },
+// Generate a magic-link sign-in URL for the given email, server-side
+// (uses Supabase admin API). Doesn't email — returns the URL so the
+// dashboard can show it for the owner to copy and share via SMS, etc.
+// Sidesteps Supabase's free-tier email rate limit (4/hr, 30/day).
+export async function generateInviteLink(
+  email: string,
+): Promise<{ email: string; action_link: string }> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session) throw new Error("Not signed in");
+
+  const res = await fetch("/api/invite", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ email }),
   });
-  if (error) throw error;
+  const body = (await res.json()) as {
+    ok?: boolean;
+    email?: string;
+    action_link?: string;
+    error?: string;
+  };
+  if (!res.ok || !body.action_link) {
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return { email: body.email ?? email, action_link: body.action_link };
 }
 
 // ── Profile (current user) ─────────────────────────────────────────
