@@ -1,3 +1,8 @@
+// SDLuxury operates in Los Angeles. Pin all datetime rendering to that
+// zone so drivers/clients on other devices still see the dispatch time
+// they should show up at, not their own local clock.
+export const BUSINESS_TZ = "America/Los_Angeles";
+
 export const fmtMoney = (cents: number): string =>
   (cents / 100).toLocaleString(undefined, {
     style: "currency",
@@ -5,13 +10,15 @@ export const fmtMoney = (cents: number): string =>
   });
 
 export const fmtTime = (iso: string): string =>
-  new Date(iso).toLocaleTimeString(undefined, {
+  new Date(iso).toLocaleTimeString("en-US", {
+    timeZone: BUSINESS_TZ,
     hour: "numeric",
     minute: "2-digit",
   });
 
 export const fmtDate = (iso: string): string =>
-  new Date(iso).toLocaleDateString(undefined, {
+  new Date(iso).toLocaleDateString("en-US", {
+    timeZone: BUSINESS_TZ,
     weekday: "short",
     month: "short",
     day: "numeric",

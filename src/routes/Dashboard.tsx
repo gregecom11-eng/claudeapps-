@@ -290,7 +290,8 @@ function PageHeader({
   ridesCount: number;
   inProgress: number;
 }) {
-  const dateLong = new Date().toLocaleDateString(undefined, {
+  const dateLong = new Date().toLocaleDateString("en-US", {
+    timeZone: "America/Los_Angeles",
     weekday: "long",
     month: "long",
     day: "numeric",
@@ -448,10 +449,11 @@ function HeartbeatPanel({
           </div>
         </div>
         <div className="text-muted tnum" style={{ fontSize: 11.5 }}>
-          {new Date().toLocaleTimeString(undefined, {
+          {new Date().toLocaleTimeString("en-US", {
+            timeZone: "America/Los_Angeles",
             hour: "numeric",
             minute: "2-digit",
-          })}
+          })} PT
         </div>
       </header>
 

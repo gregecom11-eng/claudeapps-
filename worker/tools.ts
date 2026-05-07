@@ -198,6 +198,23 @@ const err = (msg: string) => ({
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────
+
+// All operator-facing datetime strings render in the business's timezone.
+// Cloudflare Workers run in UTC, so toLocaleString() with no options would
+// render UTC labelled as local — must pass timeZone explicitly.
+const BUSINESS_TZ = "America/Los_Angeles";
+
+function formatLocal(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: BUSINESS_TZ,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function dollarsToCents(v: unknown): number {
   if (typeof v === "number" && Number.isFinite(v)) return Math.round(v * 100);
   if (typeof v === "string") {
@@ -217,9 +234,8 @@ function resolveDateRange(
   date: string | undefined,
 ): { from: string; to: string } | null {
   if (!date) return null;
-  const tz = "America/Los_Angeles";
   const anchor = new Date(
-    new Date().toLocaleString("en-US", { timeZone: tz }),
+    new Date().toLocaleString("en-US", { timeZone: BUSINESS_TZ }),
   );
   const startOfDay = (d: Date) => {
     const x = new Date(d);
@@ -378,9 +394,9 @@ async function createRide(args: Record<string, unknown>, env: Env) {
 
   return {
     ride_id: data.id,
-    summary: `Created ride for ${data.passenger_name} at ${new Date(
+    summary: `Created ride for ${data.passenger_name} at ${formatLocal(
       data.pickup_at,
-    ).toLocaleString()}.`,
+    )} (Pacific).`,
     ride: data,
   };
 }
@@ -406,7 +422,7 @@ async function listRides(args: Record<string, unknown>, env: Env) {
     rides: (data ?? []).map((r) => ({
       id: r.id,
       pickup_at: r.pickup_at,
-      pickup_at_local: new Date(r.pickup_at).toLocaleString(),
+      pickup_at_local: formatLocal(r.pickup_at),
       passenger_name: r.passenger_name,
       pickup_address: r.pickup_address,
       dropoff_address: r.dropoff_address,
@@ -446,10 +462,7 @@ async function updateRideStatus(args: Record<string, unknown>, env: Env) {
     if (data.length > 1)
       throw new Error(
         `Multiple rides match '${passenger_name}'. Pass ride_id explicitly: ${data
-          .map(
-            (r) =>
-              `${r.id} (${new Date(r.pickup_at).toLocaleString()})`,
-          )
+          .map((r) => `${r.id} (${formatLocal(r.pickup_at)})`)
           .join(", ")}`,
       );
     ride_id = data[0].id;
@@ -465,7 +478,9 @@ async function updateRideStatus(args: Record<string, unknown>, env: Env) {
   return {
     ride_id: data.id,
     new_status: data.status,
-    summary: `Set ${data.passenger_name}'s ride to ${data.status}.`,
+    summary: `Set ${data.passenger_name}'s ride at ${formatLocal(
+      data.pickup_at,
+    )} to ${data.status}.`,
   };
 }
 

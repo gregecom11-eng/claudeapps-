@@ -882,7 +882,9 @@ function buildPackets(
 
   const invoice = [
     `INVOICE`,
-    `Issued: ${new Date().toLocaleDateString()}`,
+    `Issued: ${new Date().toLocaleDateString("en-US", {
+      timeZone: "America/Los_Angeles",
+    })}`,
     "",
     "Bill to",
     `  ${client?.company ?? ride.passenger_name}`,
