@@ -2,21 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --bg: #FAFAF7;
-  --surface: #FFFFFF;
-  --surface-2: #F4F3EE;
-  --border: #E6E4DD;
-  --text: #15161B;
-  --text-muted: #6B6E78;
-  --accent: #8B6E3C;
-  --accent-strong: #6E5829;
-  --success: #2F8B5C;
-  --warn: #B27F1A;
-  --danger: #B0413E;
-}
-
-.dark {
+/* Design tokens — owner / driver / staff palette
+   (mirrors dispatch-101 design system) */
+:root[data-theme="dark"] {
   --bg: #0B0B0F;
   --surface: #14151B;
   --surface-2: #1C1E27;
@@ -28,48 +16,139 @@
   --success: #62C28E;
   --warn: #E0B252;
   --danger: #E26F6F;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-md: 0 8px 24px rgba(0,0,0,0.35);
+  --ring-soft: rgba(200,169,126,0.18);
+}
+:root[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --surface-2: #F4F3EE;
+  --border: #E6E4DD;
+  --text: #15161B;
+  --text-muted: #6B6E78;
+  --accent: #8B6E3C;
+  --accent-strong: #6E5829;
+  --success: #2E8757;
+  --warn: #A07320;
+  --danger: #B84B4B;
+  --shadow-sm: 0 1px 2px rgba(20,20,25,0.05);
+  --shadow-md: 0 8px 24px rgba(20,20,25,0.06);
+  --ring-soft: rgba(139,110,60,0.14);
 }
 
 html, body, #root { height: 100%; }
-body { font-feature-settings: "cv11", "ss01", "ss03"; }
+html, body { background: var(--bg); color: var(--text); }
+body {
+  font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
 
-/* Tabular numbers for time / money / IDs */
-.tabular { font-variant-numeric: tabular-nums; }
+/* ── Helper classes used by the design components ─────────────────── */
+.tnum         { font-variant-numeric: tabular-nums; }
+.surface      { background: var(--surface); border: 1px solid var(--border); }
+.surface-2    { background: var(--surface-2); border: 1px solid var(--border); }
+.hairline     { border-color: var(--border); }
+.text-muted   { color: var(--text-muted); }
+.text-accent  { color: var(--accent); }
+.text-success { color: var(--success); }
+.text-danger  { color: var(--danger); }
+.bg-accent          { background: var(--accent); }
+.bg-accent-strong   { background: var(--accent-strong); }
+.shadow-card  { box-shadow: var(--shadow-sm); }
+.shadow-pop   { box-shadow: var(--shadow-md); }
 
+/* Dotted vertical timeline rail (used in some designs) */
+.rail {
+  background-image: linear-gradient(to bottom, var(--border) 0 4px, transparent 4px 8px);
+  background-size: 1px 8px;
+  background-repeat: repeat-y;
+  background-position: center top;
+}
+
+/* Heartbeat live-dot pulse */
+@keyframes pulseDot {
+  0%   { box-shadow: 0 0 0 0 rgba(98,194,142,0.55); }
+  70%  { box-shadow: 0 0 0 8px rgba(98,194,142,0); }
+  100% { box-shadow: 0 0 0 0 rgba(98,194,142,0); }
+}
+.pulse-dot { animation: pulseDot 2.4s ease-out infinite; }
+
+/* Pop-in for "Copied" confirmation */
+@keyframes pop {
+  0%   { transform: scale(0.96); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.pop-in { animation: pop 160ms ease-out both; }
+
+/* Chip/badge base */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: 999px; padding: 2px 10px;
+  font-size: 12px; font-weight: 500; line-height: 18px;
+  border: 1px solid var(--border);
+}
+
+/* Form atoms */
+.label {
+  display: block; font-size: 11px; font-weight: 500;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 6px;
+}
+.field {
+  width: 100%; height: 40px; padding: 0 12px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  font-size: 14px; outline: none; transition: border-color 120ms;
+}
+.field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); }
+.field-prefixed { padding-left: 36px; }
+textarea.field { height: auto; padding-top: 10px; padding-bottom: 10px; }
+.help { color: var(--text-muted); font-size: 11.5px; margin-top: 6px; }
+
+/* Custom focus ring */
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring-soft);
+  border-radius: 8px;
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+
+/* ── Legacy convenience classes (used by routes pending redesign) ──── */
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-sm
+    @apply inline-flex items-center justify-center gap-2 rounded-[8px]
            px-4 py-2 text-sm font-medium transition
            focus:outline-none focus:ring-2 focus:ring-accent
            disabled:opacity-50 disabled:cursor-not-allowed;
   }
-  .btn-primary {
-    @apply bg-accent text-bg hover:bg-accent-strong;
-  }
-  .btn-ghost {
-    @apply border border-border bg-transparent text-text
-           hover:bg-surface-2;
-  }
-  .btn-danger {
-    @apply border border-border text-danger hover:bg-surface-2;
-  }
+  .btn-primary { background: var(--accent); color: #15161B; border: 1px solid var(--accent-strong); }
+  .btn-primary:hover { background: var(--accent-strong); }
+  .btn-ghost   { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost:hover { background: var(--surface-2); }
+  .btn-danger  { background: transparent; color: var(--danger); border: 1px solid var(--border); }
   .input {
-    @apply w-full rounded-sm border border-border bg-surface px-3 py-2
-           text-sm text-text placeholder:text-muted
-           focus:border-accent focus:ring-1 focus:ring-accent;
+    @apply w-full rounded-[8px] px-3 py-2 text-sm
+           focus:outline-none;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
   }
+  .input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); }
   .card {
-    @apply rounded bg-surface border border-border shadow-card
-           dark:shadow-card-dark p-4;
+    @apply rounded-[12px] p-4 shadow-card;
+    background: var(--surface);
+    border: 1px solid var(--border);
   }
   .badge {
-    @apply inline-flex items-center rounded-full border border-border
-           bg-surface-2 px-2.5 py-0.5 text-xs font-medium uppercase
-           tracking-wide text-muted;
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5
+           text-xs font-medium uppercase tracking-wide;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
   }
-  .badge-scheduled  { @apply text-accent; }
-  .badge-in_progress { @apply text-warn; }
-  .badge-completed  { @apply text-success; }
-  .badge-cancelled  { @apply text-danger; }
-  .badge-requested  { @apply text-muted; }
 }
