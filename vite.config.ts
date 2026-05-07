@@ -1,6 +1,8 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 // Set BASE_PATH at build time when deploying to GitHub Pages under a subpath,
 // e.g. BASE_PATH=/claudeapps-/ for https://<user>.github.io/claudeapps-/
 declare const process: { env: Record<string, string | undefined> };
@@ -8,7 +10,7 @@ const base = process.env.BASE_PATH || "/";
 
 export default defineConfig({
   base,
-  plugins: [react()],
+  plugins: [react(), cloudflare()],
   server: {
     port: 5173,
     proxy: {

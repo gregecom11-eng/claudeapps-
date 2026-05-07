@@ -12,3 +12,7 @@ dist/
 mcp-server/node_modules/
 mcp-server/dist/
 mcp-server/.wrangler/
+
+.dev.vars*
+!.dev.vars.example
+!.env.example
