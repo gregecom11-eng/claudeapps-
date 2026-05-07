@@ -1,7 +1,10 @@
 // Minimal app-shell service worker.
 // Caches static assets on install; for navigation requests serves the cached
-// shell when offline. API requests bypass the cache (network-only).
-const CACHE = "limo-shell-v1";
+// shell when offline. NEVER caches /api/* (worker MCP) or any cross-origin
+// request (Supabase REST, fonts, etc.) — those must always hit the network
+// or stale data sneaks in (the dashboard once cached an empty rides list
+// and the dashboard kept showing zero rides even after writes).
+const CACHE = "limo-shell-v2";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -22,7 +25,11 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // Never cache API calls.
+  // Cross-origin requests (Supabase, Google Fonts, anything not us) — let
+  // the browser handle them directly. We have no business caching them.
+  if (url.origin !== self.location.origin) return;
+
+  // Never cache our own /api/* (MCP / worker endpoints).
   if (url.pathname.startsWith("/api/")) return;
 
   // Navigation: try network, fall back to cached shell.
@@ -33,7 +40,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Other GETs: cache-first, populate on miss.
+  // Other same-origin GETs (built JS/CSS/images): cache-first.
   if (req.method === "GET") {
     event.respondWith(
       caches.match(req).then(
