@@ -70,6 +70,8 @@ export const TOOL_SCHEMAS = [
           enum: [
             "requested",
             "scheduled",
+            "on_the_way",
+            "arrived",
             "in_progress",
             "completed",
             "cancelled",
@@ -94,6 +96,8 @@ export const TOOL_SCHEMAS = [
           enum: [
             "requested",
             "scheduled",
+            "on_the_way",
+            "arrived",
             "in_progress",
             "completed",
             "cancelled",

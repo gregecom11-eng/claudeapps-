@@ -4,7 +4,7 @@ import { DriverShell } from "./components/DriverShell";
 import { useAuth, AuthProvider } from "./lib/auth";
 import { Login } from "./routes/Login";
 import { Dashboard } from "./routes/Dashboard";
-import { Driver } from "./routes/Driver";
+import { Driver, DriverPast, DriverProfile } from "./routes/Driver";
 import { Rides } from "./routes/Rides";
 import { RideDetail } from "./routes/RideDetail";
 import { RideForm } from "./routes/RideForm";
@@ -52,6 +52,8 @@ function Gate() {
       <Routes>
         <Route element={<DriverShell />}>
           <Route index element={<Driver />} />
+          <Route path="past" element={<DriverPast />} />
+          <Route path="profile" element={<DriverProfile />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

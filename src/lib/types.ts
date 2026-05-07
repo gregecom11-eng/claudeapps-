@@ -7,6 +7,8 @@ export type UserRole = "owner" | "driver" | "client";
 export type RideStatus =
   | "requested"
   | "scheduled"
+  | "on_the_way"
+  | "arrived"
   | "in_progress"
   | "completed"
   | "cancelled";
@@ -137,4 +139,13 @@ export type ActivityEvent = {
   message: string;
   metadata: Record<string, unknown> | null;
   created_at: string;
+};
+
+export type RideExtra = {
+  id: string;
+  ride_id: string;
+  description: string;
+  amount_cents: number;
+  added_by: string | null;
+  added_at: string;
 };

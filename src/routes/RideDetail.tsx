@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
+  addRideExtra,
+  deleteRideExtra,
   getRide,
   listClients,
   listDrivers,
+  listRideExtras,
   listVehicles,
   updateRideStatus,
 } from "../lib/api";
@@ -12,6 +15,7 @@ import { Avatar } from "../components/Avatar";
 import { Icon, type IconName } from "../components/Icon";
 import { StatusBadge } from "../components/StatusBadge";
 import type {
+  RideExtra,
   Client,
   Driver,
   Ride,
@@ -35,9 +39,15 @@ export function RideDetail() {
   const [client, setClient] = useState<Client | null>(null);
   const [driver, setDriver] = useState<Driver | null>(null);
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
+  const [extras, setExtras] = useState<RideExtra[]>([]);
   const [tab, setTab] = useState<TabId>("overview");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const reloadExtras = () => {
+    if (!id) return;
+    listRideExtras(id).then(setExtras).catch(() => {});
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -59,6 +69,8 @@ export function RideDetail() {
         setClient(clients.find((c) => c.id === r.client_id) ?? null);
         setDriver(drivers.find((d) => d.id === r.driver_id) ?? null);
         setVehicle(vehicles.find((v) => v.id === r.vehicle_id) ?? null);
+        const ex = await listRideExtras(r.id);
+        if (!cancelled) setExtras(ex);
       } catch (e) {
         if (!cancelled)
           setError(e instanceof Error ? e.message : "Failed to load");
@@ -208,6 +220,8 @@ export function RideDetail() {
                 driver={driver}
                 vehicle={vehicle}
                 client={client}
+                extras={extras}
+                onExtrasChanged={reloadExtras}
               />
             ) : (
               <CopyCard
@@ -240,11 +254,15 @@ function Overview({
   driver,
   vehicle,
   client,
+  extras,
+  onExtrasChanged,
 }: {
   ride: Ride;
   driver: Driver | null;
   vehicle: Vehicle | null;
   client: Client | null;
+  extras: RideExtra[];
+  onExtrasChanged: () => void;
 }) {
   return (
     <div className="grid gap-4">
@@ -366,6 +384,13 @@ function Overview({
         </div>
       </article>
 
+      <ExtrasCard
+        rideId={ride.id}
+        extras={extras}
+        baseTotalCents={ride.total_cents}
+        onChanged={onExtrasChanged}
+      />
+
       {driver ? (
         <article className="surface rounded-[12px]">
           <header
@@ -449,16 +474,20 @@ function RightRail({
 }) {
   const next: RideStatus | null =
     ride.status === "scheduled" || ride.status === "requested"
+      ? "on_the_way"
+      : ride.status === "on_the_way"
+      ? "arrived"
+      : ride.status === "arrived"
       ? "in_progress"
       : ride.status === "in_progress"
       ? "completed"
       : null;
-  const nextLabel =
-    next === "in_progress"
-      ? "Mark as in progress"
-      : next === "completed"
-      ? "Mark as completed"
-      : "Ride completed";
+  const nextLabel: Record<string, string> = {
+    on_the_way: "Driver on the way",
+    arrived: "Driver at pickup",
+    in_progress: "Passenger on board",
+    completed: "Mark completed",
+  };
 
   return (
     <aside className="flex flex-col gap-4">
@@ -626,7 +655,7 @@ function RightRail({
                 name={next === "completed" ? "check" : "arrow"}
                 size={15}
               />
-              {nextLabel}
+              {nextLabel[next]}
             </button>
           ) : (
             <div
@@ -769,6 +798,188 @@ function tabTitle(tab: TabId): string {
     default:
       return "";
   }
+}
+
+/* ── Extras (stops, additional services) ─────────────────────────── */
+function ExtrasCard({
+  rideId,
+  extras,
+  baseTotalCents,
+  onChanged,
+}: {
+  rideId: string;
+  extras: RideExtra[];
+  baseTotalCents: number;
+  onChanged: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ description: "", amount: "" });
+  const [busy, setBusy] = useState(false);
+
+  const extrasTotal = extras.reduce(
+    (s, e) => s + (e.amount_cents ?? 0),
+    0,
+  );
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!draft.description.trim()) return;
+    setBusy(true);
+    try {
+      const cents =
+        Math.round(parseFloat(draft.amount || "0") * 100) || 0;
+      await addRideExtra(rideId, draft.description.trim(), cents);
+      setDraft({ description: "", amount: "" });
+      setAdding(false);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    if (!confirm("Remove this extra?")) return;
+    await deleteRideExtra(id);
+    onChanged();
+  };
+
+  return (
+    <article className="surface rounded-[12px]">
+      <header
+        className="flex items-center justify-between px-5 py-4"
+        style={{ borderBottom: "1px solid var(--border)" }}
+      >
+        <h3 style={{ fontSize: 14.5, fontWeight: 600 }}>
+          Extras &amp; stops
+        </h3>
+        <button
+          onClick={() => setAdding((a) => !a)}
+          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[8px] text-[12.5px] font-medium"
+          style={{
+            background: "transparent",
+            color: "var(--text)",
+            border: "1px solid var(--border)",
+          }}
+        >
+          <Icon name={adding ? "x" : "plus"} size={13} />
+          {adding ? "Cancel" : "Add"}
+        </button>
+      </header>
+
+      {adding ? (
+        <form
+          onSubmit={submit}
+          className="p-4 grid gap-3 sm:grid-cols-[1fr_140px_auto] items-end"
+          style={{
+            background: "var(--surface-2)",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <label className="block text-sm">
+            <span className="label">Description</span>
+            <input
+              className="field"
+              value={draft.description}
+              onChange={(e) =>
+                setDraft({ ...draft, description: e.target.value })
+              }
+              placeholder="e.g. Extra stop · Beverly Center"
+              autoFocus
+              required
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="label">Amount</span>
+            <div className="relative">
+              <span
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted tnum"
+                style={{ fontSize: 14, pointerEvents: "none" }}
+              >
+                $
+              </span>
+              <input
+                className="field tnum"
+                style={{ paddingLeft: 28 }}
+                inputMode="decimal"
+                value={draft.amount}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    amount: e.target.value.replace(/[^0-9.]/g, ""),
+                  })
+                }
+                placeholder="0.00"
+              />
+            </div>
+          </label>
+          <button
+            type="submit"
+            disabled={busy || !draft.description.trim()}
+            className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-[8px] text-[13.5px] font-semibold disabled:opacity-50"
+            style={{
+              background: "var(--accent)",
+              color: "#15161B",
+              border: "1px solid var(--accent-strong)",
+            }}
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </form>
+      ) : null}
+
+      <div className="p-5">
+        {extras.length === 0 ? (
+          <div className="text-muted text-sm">
+            None yet. Drivers can add stops or extra services from their app
+            during a ride; you can add them here too.
+          </div>
+        ) : (
+          <ul className="space-y-2 text-sm">
+            {extras.map((x) => (
+              <li
+                key={x.id}
+                className="flex items-center gap-3"
+              >
+                <span className="flex-1 min-w-0 truncate">
+                  {x.description}
+                </span>
+                <span className="tabular text-muted">
+                  +{fmtMoney(x.amount_cents ?? 0)}
+                </span>
+                <button
+                  onClick={() => remove(x.id)}
+                  aria-label="Delete"
+                  className="inline-grid place-items-center text-muted hover:text-danger"
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 6,
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  <Icon name="x" size={12} />
+                </button>
+              </li>
+            ))}
+            <li
+              className="flex items-center gap-3 pt-2"
+              style={{ borderTop: "1px solid var(--border)" }}
+            >
+              <span className="flex-1 text-muted text-xs">
+                Base + extras
+              </span>
+              <span
+                className="tabular"
+                style={{ fontWeight: 600, fontSize: 16 }}
+              >
+                {fmtMoney(baseTotalCents + extrasTotal)}
+              </span>
+            </li>
+          </ul>
+        )}
+      </div>
+    </article>
+  );
 }
 
 function tabSubtitle(tab: TabId, ride: Ride): string {

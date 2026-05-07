@@ -3,7 +3,9 @@ import type { RideStatus } from "../lib/types";
 const MAP: Record<RideStatus, { label: string; color: string }> = {
   requested: { label: "Requested", color: "var(--text-muted)" },
   scheduled: { label: "Scheduled", color: "var(--text-muted)" },
-  in_progress: { label: "In progress", color: "var(--accent)" },
+  on_the_way: { label: "On the way", color: "var(--warn)" },
+  arrived: { label: "At pickup", color: "var(--accent)" },
+  in_progress: { label: "On board", color: "var(--accent)" },
   completed: { label: "Completed", color: "var(--success)" },
   cancelled: { label: "Cancelled", color: "var(--danger)" },
 };

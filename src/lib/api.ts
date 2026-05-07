@@ -246,6 +246,44 @@ export async function updateMyProfile(patch: {
   if (error) throw error;
 }
 
+// ── Ride extras (stops, additional services) ──────────────────────
+export async function listRideExtras(rideId: string) {
+  const { data, error } = await supabase
+    .from("ride_extras")
+    .select("*")
+    .eq("ride_id", rideId)
+    .order("added_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as import("./types").RideExtra[];
+}
+
+export async function addRideExtra(
+  rideId: string,
+  description: string,
+  amount_cents: number,
+): Promise<import("./types").RideExtra> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const { data, error } = await supabase
+    .from("ride_extras")
+    .insert({
+      ride_id: rideId,
+      description: description.trim(),
+      amount_cents,
+      added_by: user?.id ?? null,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as import("./types").RideExtra;
+}
+
+export async function deleteRideExtra(id: string): Promise<void> {
+  const { error } = await supabase.from("ride_extras").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // ── Backup snapshot ───────────────────────────────────────────────
 export async function exportSnapshot(): Promise<{
   exported_at: string;

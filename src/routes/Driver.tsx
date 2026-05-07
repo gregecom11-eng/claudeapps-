@@ -1,16 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
+  addRideExtra,
   claimDriverByEmail,
+  listRideExtras,
   listRides,
   listVehicles,
+  updateMyProfile,
   updateRideStatus,
 } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { BUSINESS_TZ, fmtDate, fmtTime } from "../lib/format";
+import { downloadICS } from "../lib/calendar";
+import { BUSINESS_TZ, fmtDate, fmtMoney, fmtTime } from "../lib/format";
 import { Avatar } from "../components/Avatar";
 import { Icon, type IconName } from "../components/Icon";
 import { StatusBadge } from "../components/StatusBadge";
-import type { Driver, Ride, RideStatus, Vehicle } from "../lib/types";
+import type {
+  Driver as DriverType,
+  Ride,
+  RideExtra,
+  RideStatus,
+  Vehicle,
+} from "../lib/types";
 
 type Bucket = "Morning" | "Afternoon" | "Evening";
 
@@ -52,15 +63,14 @@ function laDayBoundsFor(d = new Date()): { from: string; to: string } {
 }
 
 export function Driver() {
-  const { session } = useAuth();
-  const [linked, setLinked] = useState<Driver | null | "loading">("loading");
+  const { session, profile } = useAuth();
+  const [linked, setLinked] = useState<DriverType | null | "loading">("loading");
   const [today, setToday] = useState<Ride[] | null>(null);
   const [tomorrow, setTomorrow] = useState<Ride[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeRide, setActiveRide] = useState<Ride | null>(null);
 
-  // 1) Link drivers row to current user (idempotent).
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
@@ -79,7 +89,6 @@ export function Driver() {
     };
   }, [session]);
 
-  // 2) Load today + tomorrow + vehicles. RLS scopes rides to this driver.
   const reload = () => {
     const todayWindow = laDayBoundsFor();
     const tomorrowWindow = laDayBoundsFor(
@@ -115,42 +124,7 @@ export function Driver() {
   }
 
   if (!linked) {
-    return (
-      <div className="space-y-4">
-        <h1
-          style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}
-        >
-          You're signed in
-        </h1>
-        <div
-          className="surface rounded-[12px] p-5 text-sm space-y-3"
-          style={{ lineHeight: 1.55 }}
-        >
-          <p>
-            But your driver record isn't linked yet. Ask your dispatcher to
-            add you under <strong>Settings → Drivers</strong> with this exact
-            email:
-          </p>
-          <code
-            className="block rounded-[8px] px-3 py-2"
-            style={{
-              background: "var(--surface-2)",
-              border: "1px solid var(--border)",
-              fontSize: 13,
-              wordBreak: "break-all",
-            }}
-          >
-            {session?.user?.email}
-          </code>
-          <p className="text-muted">
-            Once they save, refresh this page and you'll see your day.
-          </p>
-        </div>
-        {error ? (
-          <div className="text-danger text-sm">{error}</div>
-        ) : null}
-      </div>
-    );
+    return <NotLinkedNotice email={session?.user?.email ?? ""} error={error} />;
   }
 
   const groups = groupByBucket(today ?? []);
@@ -178,7 +152,7 @@ export function Driver() {
           className="mt-1"
           style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.02em" }}
         >
-          {firstName(linked.full_name)}'s day
+          {firstName(profile?.full_name ?? linked.full_name)}'s day
         </h1>
         <p
           className="text-muted mt-1"
@@ -246,7 +220,7 @@ export function Driver() {
       ) : null}
 
       {tomorrow.length > 0 ? (
-        <section className="pt-4">
+        <section className="pt-2">
           <div className="flex items-center gap-3 mb-3">
             <Icon name="calendar" size={14} className="text-muted" />
             <h2
@@ -266,7 +240,11 @@ export function Driver() {
           </div>
           <ul className="surface rounded-[12px] divide-y divide-border">
             {tomorrow.map((r) => (
-              <li key={r.id} className="px-4 py-3 flex items-center gap-3">
+              <li
+                key={r.id}
+                className="px-4 py-3 flex items-center gap-3 cursor-pointer"
+                onClick={() => setActiveRide(r)}
+              >
                 <div className="tabular text-sm font-medium w-16">
                   {fmtTime(r.pickup_at)}
                 </div>
@@ -294,23 +272,72 @@ export function Driver() {
       {activeRide ? (
         <RideSheet
           ride={activeRide}
+          driver={linked}
           vehicle={
             activeRide.vehicle_id
               ? vehiclesById.get(activeRide.vehicle_id) ?? null
               : null
           }
           onClose={() => setActiveRide(null)}
-          onStatus={async (status) => {
-            try {
-              await updateRideStatus(activeRide.id, status);
-              setActiveRide({ ...activeRide, status });
-              reload();
-            } catch (e) {
-              setError(e instanceof Error ? e.message : "Update failed");
+          onChange={async (updates) => {
+            // Status change
+            if (updates.status) {
+              try {
+                const updated = await updateRideStatus(
+                  activeRide.id,
+                  updates.status,
+                );
+                setActiveRide(updated);
+                reload();
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "Update failed");
+              }
             }
           }}
         />
       ) : null}
+    </div>
+  );
+}
+
+function NotLinkedNotice({
+  email,
+  error,
+}: {
+  email: string;
+  error: string | null;
+}) {
+  return (
+    <div className="space-y-4">
+      <h1
+        style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}
+      >
+        You're signed in
+      </h1>
+      <div
+        className="surface rounded-[12px] p-5 text-sm space-y-3"
+        style={{ lineHeight: 1.55 }}
+      >
+        <p>
+          But your driver record isn't linked yet. Ask your dispatcher to add
+          you under <strong>Settings → Drivers</strong> with this exact email:
+        </p>
+        <code
+          className="block rounded-[8px] px-3 py-2"
+          style={{
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            fontSize: 13,
+            wordBreak: "break-all",
+          }}
+        >
+          {email}
+        </code>
+        <p className="text-muted">
+          Once they save, refresh this page and you'll see your day.
+        </p>
+      </div>
+      {error ? <div className="text-danger text-sm">{error}</div> : null}
     </div>
   );
 }
@@ -325,7 +352,7 @@ function DriverRideCard({
   vehicle: Vehicle | null | undefined;
   onTap: () => void;
 }) {
-  const isLive = ride.status === "in_progress";
+  const isLive = ride.status === "in_progress" || ride.status === "arrived";
   return (
     <button
       onClick={onTap}
@@ -381,30 +408,36 @@ function DriverRideCard({
   );
 }
 
-/* ── Full ride briefing sheet ──────────────────────────────────── */
+/* ── Full ride sheet (the main work area for an active ride) ─── */
+type SheetTab = "briefing" | "waybill";
+
 function RideSheet({
   ride,
+  driver,
   vehicle,
   onClose,
-  onStatus,
+  onChange,
 }: {
   ride: Ride;
+  driver: DriverType;
   vehicle: Vehicle | null;
   onClose: () => void;
-  onStatus: (status: RideStatus) => void;
+  onChange: (updates: { status?: RideStatus }) => void;
 }) {
-  const next: RideStatus | null =
-    ride.status === "scheduled" || ride.status === "requested"
-      ? "in_progress"
-      : ride.status === "in_progress"
-      ? "completed"
-      : null;
-  const nextLabel =
-    next === "in_progress"
-      ? "On my way"
-      : next === "completed"
-      ? "Mark completed"
-      : null;
+  const [tab, setTab] = useState<SheetTab>("briefing");
+  const [extras, setExtras] = useState<RideExtra[]>([]);
+  const [extrasErr, setExtrasErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    listRideExtras(ride.id)
+      .then(setExtras)
+      .catch((e) =>
+        setExtrasErr(e instanceof Error ? e.message : "Failed to load extras"),
+      );
+  }, [ride.id]);
+
+  const reloadExtras = () =>
+    listRideExtras(ride.id).then(setExtras).catch(() => {});
 
   const mapsUrl = (addr: string) =>
     `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}`;
@@ -416,22 +449,26 @@ function RideSheet({
       onClick={onClose}
     >
       <div
-        className="surface rounded-t-[16px] md:rounded-[16px] w-full md:max-w-[520px] max-h-[92vh] overflow-y-auto"
+        className="surface rounded-t-[16px] md:rounded-[16px] w-full md:max-w-[560px] max-h-[94vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
         style={{
           paddingBottom: "max(env(safe-area-inset-bottom), 16px)",
         }}
       >
+        {/* Header */}
         <div
-          className="px-5 pt-4 pb-3 flex items-start justify-between gap-3"
-          style={{ borderBottom: "1px solid var(--border)" }}
+          className="px-5 pt-4 pb-3 flex items-start justify-between gap-3 sticky top-0"
+          style={{
+            borderBottom: "1px solid var(--border)",
+            background: "var(--surface)",
+          }}
         >
           <div className="min-w-0">
             <div
               className="text-muted tabular"
               style={{ fontSize: 12.5 }}
             >
-              {fmtDate(ride.pickup_at)} · {fmtTime(ride.pickup_at)}
+              {fmtDate(ride.pickup_at)} · {fmtTime(ride.pickup_at)} PT
             </div>
             <h2
               className="truncate"
@@ -460,44 +497,66 @@ function RideSheet({
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
-          {ride.passenger_phone ? (
-            <a
-              href={`tel:${ride.passenger_phone}`}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-[10px] h-12 text-[15px] font-semibold"
-              style={{
-                background:
-                  "color-mix(in oklab, var(--success) 22%, var(--surface))",
-                color: "var(--success)",
-                border:
-                  "1px solid color-mix(in oklab, var(--success) 50%, var(--border))",
-              }}
+        {/* Status progress strip */}
+        <ProgressStrip status={ride.status} />
+
+        {/* Tabs */}
+        <div
+          className="flex gap-0 px-1"
+          style={{ borderBottom: "1px solid var(--border)" }}
+        >
+          {(["briefing", "waybill"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className="tab"
+              role="tab"
+              aria-selected={tab === t}
             >
-              <Icon name="phone" size={16} /> Call {firstName(ride.passenger_name)}
-            </a>
-          ) : null}
+              <span className="inline-flex items-center gap-1.5">
+                <Icon
+                  name={t === "briefing" ? "info" : "doc"}
+                  size={13}
+                />
+                {t === "briefing" ? "Briefing" : "Waybill"}
+              </span>
+            </button>
+          ))}
+          <div className="flex-1" />
+          <button
+            onClick={() => downloadICS(ride, driver, vehicle)}
+            className="inline-flex items-center gap-1.5 px-3 text-muted hover:text-text"
+            style={{ fontSize: 12.5 }}
+            title="Add this ride to your calendar"
+          >
+            <Icon name="calendar" size={13} /> .ics
+          </button>
+        </div>
 
-          <SheetRow icon="pin" label="Pickup">
-            {ride.pickup_address}
-            <div className="mt-1.5">
+        {tab === "briefing" ? (
+          <div className="p-5 space-y-4">
+            {ride.passenger_phone ? (
               <a
-                href={mapsUrl(ride.pickup_address)}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-accent"
-                style={{ fontSize: 12.5, fontWeight: 500 }}
+                href={`tel:${ride.passenger_phone}`}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-[10px] h-12 text-[15px] font-semibold"
+                style={{
+                  background:
+                    "color-mix(in oklab, var(--success) 22%, var(--surface))",
+                  color: "var(--success)",
+                  border:
+                    "1px solid color-mix(in oklab, var(--success) 50%, var(--border))",
+                }}
               >
-                Open in Maps <Icon name="arrow" size={11} />
+                <Icon name="phone" size={16} /> Call{" "}
+                {firstName(ride.passenger_name)}
               </a>
-            </div>
-          </SheetRow>
+            ) : null}
 
-          {ride.dropoff_address ? (
-            <SheetRow icon="flag" label="Dropoff">
-              {ride.dropoff_address}
+            <SheetRow icon="pin" label="Pickup">
+              {ride.pickup_address}
               <div className="mt-1.5">
                 <a
-                  href={mapsUrl(ride.dropoff_address)}
+                  href={mapsUrl(ride.pickup_address)}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 text-accent"
@@ -507,87 +566,497 @@ function RideSheet({
                 </a>
               </div>
             </SheetRow>
-          ) : null}
 
-          {ride.flight_number || ride.flight_airline ? (
-            <SheetRow icon="plane" label="Flight">
-              <span className="tnum">
-                {ride.flight_airline ?? ""} {ride.flight_number ?? ""}
-                {ride.flight_airport ? ` · ${ride.flight_airport}` : ""}
-                {ride.flight_terminal ? ` T${ride.flight_terminal}` : ""}
-              </span>
-            </SheetRow>
-          ) : null}
+            {ride.dropoff_address ? (
+              <SheetRow icon="flag" label="Dropoff">
+                {ride.dropoff_address}
+                <div className="mt-1.5">
+                  <a
+                    href={mapsUrl(ride.dropoff_address)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-accent"
+                    style={{ fontSize: 12.5, fontWeight: 500 }}
+                  >
+                    Open in Maps <Icon name="arrow" size={11} />
+                  </a>
+                </div>
+              </SheetRow>
+            ) : null}
 
-          {vehicle ? (
-            <SheetRow icon="car" label="Vehicle">
-              <span className="tnum">
-                {vehicle.display_name}
-                {vehicle.plate ? ` · plate ${vehicle.plate}` : ""}
-              </span>
-            </SheetRow>
-          ) : null}
+            {ride.flight_number || ride.flight_airline ? (
+              <SheetRow icon="plane" label="Flight">
+                <span className="tnum">
+                  {ride.flight_airline ?? ""} {ride.flight_number ?? ""}
+                  {ride.flight_airport ? ` · ${ride.flight_airport}` : ""}
+                  {ride.flight_terminal ? ` T${ride.flight_terminal}` : ""}
+                </span>
+              </SheetRow>
+            ) : null}
 
-          {ride.notes ? (
-            <SheetRow icon="info" label="Notes">
-              <span style={{ whiteSpace: "pre-wrap" }}>{ride.notes}</span>
-            </SheetRow>
-          ) : null}
-        </div>
+            {vehicle ? (
+              <SheetRow icon="car" label="Vehicle">
+                <span className="tnum">
+                  {vehicle.display_name}
+                  {vehicle.plate ? ` · plate ${vehicle.plate}` : ""}
+                </span>
+              </SheetRow>
+            ) : null}
 
+            {ride.notes ? (
+              <SheetRow icon="info" label="Dispatch notes">
+                <span style={{ whiteSpace: "pre-wrap" }}>{ride.notes}</span>
+              </SheetRow>
+            ) : null}
+
+            {/* Extras section */}
+            <ExtrasSection
+              rideId={ride.id}
+              extras={extras}
+              error={extrasErr}
+              onChanged={reloadExtras}
+            />
+          </div>
+        ) : (
+          <WaybillView
+            ride={ride}
+            driver={driver}
+            vehicle={vehicle}
+            extras={extras}
+          />
+        )}
+
+        {/* Action bar */}
         <div
-          className="px-5 py-4 space-y-2"
-          style={{ borderTop: "1px solid var(--border)" }}
+          className="px-5 py-4 space-y-2 sticky bottom-0"
+          style={{
+            borderTop: "1px solid var(--border)",
+            background: "var(--surface)",
+          }}
         >
-          {next ? (
+          <ActionBar
+            status={ride.status}
+            onAdvance={(s) => onChange({ status: s })}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProgressStrip({ status }: { status: RideStatus }) {
+  const STEPS: { key: RideStatus; label: string }[] = [
+    { key: "scheduled", label: "Booked" },
+    { key: "on_the_way", label: "On the way" },
+    { key: "arrived", label: "At pickup" },
+    { key: "in_progress", label: "On board" },
+    { key: "completed", label: "Done" },
+  ];
+  const currentIdx = STEPS.findIndex((s) => s.key === status);
+  const idx = status === "cancelled" ? -1 : currentIdx;
+
+  return (
+    <div className="px-5 py-3" style={{ background: "var(--surface-2)" }}>
+      <div className="flex items-center gap-1.5">
+        {STEPS.map((s, i) => {
+          const done = idx > i;
+          const active = idx === i;
+          return (
+            <div
+              key={s.key}
+              className="flex-1"
+              style={{
+                height: 4,
+                borderRadius: 999,
+                background: done
+                  ? "var(--success)"
+                  : active
+                  ? "var(--accent)"
+                  : "var(--border)",
+                transition: "background 200ms",
+              }}
+              title={s.label}
+            />
+          );
+        })}
+      </div>
+      <div
+        className="mt-2 text-muted"
+        style={{ fontSize: 11.5, letterSpacing: "0.02em" }}
+      >
+        {status === "cancelled"
+          ? "Ride cancelled"
+          : currentIdx >= 0
+          ? STEPS[currentIdx].label
+          : "Pending"}
+      </div>
+    </div>
+  );
+}
+
+function ActionBar({
+  status,
+  onAdvance,
+}: {
+  status: RideStatus;
+  onAdvance: (s: RideStatus) => void;
+}) {
+  const next = nextStatus(status);
+  if (!next) {
+    return (
+      <div
+        className="rounded-[10px] px-3 py-3 text-center text-sm"
+        style={{
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+        }}
+      >
+        <Icon name="check" size={18} className="text-accent inline-block" />
+        <div className="mt-1" style={{ fontWeight: 600 }}>
+          Ride {status}
+        </div>
+      </div>
+    );
+  }
+  const labels: Record<RideStatus, string> = {
+    requested: "",
+    scheduled: "On my way",
+    on_the_way: "Arrived at pickup",
+    arrived: "Start trip — passenger on board",
+    in_progress: "Mark completed",
+    completed: "",
+    cancelled: "",
+  };
+  const label = labels[next];
+  return (
+    <>
+      <button
+        onClick={() => onAdvance(next)}
+        className="w-full inline-flex items-center justify-center gap-2 rounded-[10px] h-12 text-[15px] font-semibold"
+        style={{
+          background:
+            next === "completed"
+              ? "color-mix(in oklab, var(--success) 22%, var(--surface))"
+              : "var(--accent)",
+          color: next === "completed" ? "var(--success)" : "#15161B",
+          border: `1px solid ${
+            next === "completed"
+              ? "color-mix(in oklab, var(--success) 50%, var(--border))"
+              : "var(--accent-strong)"
+          }`,
+        }}
+      >
+        <Icon
+          name={next === "completed" ? "check" : "arrow"}
+          size={16}
+        />
+        {label}
+      </button>
+      {status !== "scheduled" && status !== "completed" ? (
+        <button
+          onClick={() => onAdvance(prevStatus(status) ?? "scheduled")}
+          className="w-full inline-flex items-center justify-center h-9 rounded-[10px] text-[12.5px]"
+          style={{
+            background: "transparent",
+            border: "1px solid var(--border)",
+            color: "var(--text-muted)",
+          }}
+        >
+          ← Back to {prevStatusLabel(status)}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+function nextStatus(s: RideStatus): RideStatus | null {
+  switch (s) {
+    case "scheduled":
+    case "requested":
+      return "on_the_way";
+    case "on_the_way":
+      return "arrived";
+    case "arrived":
+      return "in_progress";
+    case "in_progress":
+      return "completed";
+    default:
+      return null;
+  }
+}
+function prevStatus(s: RideStatus): RideStatus | null {
+  switch (s) {
+    case "on_the_way":
+      return "scheduled";
+    case "arrived":
+      return "on_the_way";
+    case "in_progress":
+      return "arrived";
+    default:
+      return null;
+  }
+}
+function prevStatusLabel(s: RideStatus): string {
+  const p = prevStatus(s);
+  if (p === "scheduled") return "scheduled";
+  if (p === "on_the_way") return "on the way";
+  if (p === "arrived") return "at pickup";
+  return "previous";
+}
+
+/* ── Extras section ────────────────────────────────────────────── */
+function ExtrasSection({
+  rideId,
+  extras,
+  error,
+  onChanged,
+}: {
+  rideId: string;
+  extras: RideExtra[];
+  error: string | null;
+  onChanged: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ description: "", amount: "" });
+  const [busy, setBusy] = useState(false);
+
+  const total = extras.reduce((s, e) => s + (e.amount_cents ?? 0), 0);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!draft.description.trim()) return;
+    setBusy(true);
+    try {
+      const cents = Math.round(parseFloat(draft.amount || "0") * 100) || 0;
+      await addRideExtra(rideId, draft.description.trim(), cents);
+      setDraft({ description: "", amount: "" });
+      setAdding(false);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section
+      className="rounded-[10px] p-3"
+      style={{
+        background: "var(--surface-2)",
+        border: "1px solid var(--border)",
+      }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div
+          className="text-muted"
+          style={{
+            fontSize: 11,
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            fontWeight: 500,
+          }}
+        >
+          Extra stops · services
+        </div>
+        <button
+          onClick={() => setAdding((a) => !a)}
+          className="inline-flex items-center gap-1 text-accent"
+          style={{ fontSize: 12, fontWeight: 600 }}
+        >
+          <Icon name={adding ? "x" : "plus"} size={11} />
+          {adding ? "Cancel" : "Add"}
+        </button>
+      </div>
+
+      {extras.length === 0 && !adding ? (
+        <div className="text-muted" style={{ fontSize: 12.5 }}>
+          None yet. Add a stop, wait time, or anything that adjusts the fare.
+        </div>
+      ) : null}
+
+      {extras.length > 0 ? (
+        <ul className="space-y-1.5">
+          {extras.map((x) => (
+            <li
+              key={x.id}
+              className="flex items-center gap-2 text-sm"
+            >
+              <span className="flex-1 min-w-0 truncate">{x.description}</span>
+              <span className="tabular text-muted" style={{ fontSize: 13 }}>
+                +{fmtMoney(x.amount_cents ?? 0)}
+              </span>
+            </li>
+          ))}
+          {total > 0 ? (
+            <li
+              className="flex items-center gap-2 pt-1.5"
+              style={{ borderTop: "1px dashed var(--border)" }}
+            >
+              <span
+                className="flex-1 text-muted"
+                style={{ fontSize: 12 }}
+              >
+                Extras total
+              </span>
+              <span
+                className="tabular"
+                style={{ fontSize: 14, fontWeight: 600 }}
+              >
+                +{fmtMoney(total)}
+              </span>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+
+      {adding ? (
+        <form onSubmit={submit} className="mt-3 grid gap-2">
+          <input
+            className="field"
+            placeholder="e.g. Extra stop at Beverly Center"
+            value={draft.description}
+            onChange={(e) =>
+              setDraft({ ...draft, description: e.target.value })
+            }
+            autoFocus
+            required
+          />
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <span
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted tnum"
+                style={{ fontSize: 14, pointerEvents: "none" }}
+              >
+                $
+              </span>
+              <input
+                className="field tnum"
+                style={{ paddingLeft: 28 }}
+                inputMode="decimal"
+                placeholder="Amount"
+                value={draft.amount}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    amount: e.target.value.replace(/[^0-9.]/g, ""),
+                  })
+                }
+              />
+            </div>
             <button
-              onClick={() => onStatus(next)}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-[10px] h-12 text-[15px] font-semibold"
+              type="submit"
+              disabled={busy || !draft.description.trim()}
+              className="inline-flex items-center justify-center gap-2 rounded-[8px] h-10 px-4 text-[13px] font-semibold disabled:opacity-50"
               style={{
                 background: "var(--accent)",
                 color: "#15161B",
                 border: "1px solid var(--accent-strong)",
               }}
             >
-              <Icon
-                name={next === "completed" ? "check" : "arrow"}
-                size={16}
-              />
-              {nextLabel}
+              {busy ? "Saving…" : "Save"}
             </button>
-          ) : (
-            <div
-              className="rounded-[10px] px-3 py-3 text-center text-sm"
-              style={{
-                background: "var(--surface-2)",
-                border: "1px solid var(--border)",
-              }}
-            >
-              <Icon
-                name="check"
-                size={18}
-                className="text-accent inline-block"
-              />
-              <div className="mt-1" style={{ fontWeight: 600 }}>
-                Ride {ride.status}
-              </div>
-            </div>
-          )}
-          {ride.status === "in_progress" ? (
-            <button
-              onClick={() => onStatus("scheduled")}
-              className="w-full inline-flex items-center justify-center h-10 rounded-[10px] text-[13px]"
-              style={{
-                background: "transparent",
-                border: "1px solid var(--border)",
-                color: "var(--text)",
-              }}
-            >
-              Revert to scheduled
-            </button>
-          ) : null}
+          </div>
+        </form>
+      ) : null}
+
+      {error ? (
+        <div className="mt-2 text-danger" style={{ fontSize: 12 }}>
+          {error}
         </div>
+      ) : null}
+    </section>
+  );
+}
+
+/* ── Waybill view (DOT-compliant slip for police stops) ──────── */
+function WaybillView({
+  ride,
+  driver,
+  vehicle,
+  extras,
+}: {
+  ride: Ride;
+  driver: DriverType;
+  vehicle: Vehicle | null;
+  extras: RideExtra[];
+}) {
+  const extrasTotal = extras.reduce(
+    (s, e) => s + (e.amount_cents ?? 0),
+    0,
+  );
+  const grandTotal = ride.total_cents + extrasTotal;
+
+  const lines = [
+    "WAYBILL — SDLUXURY TRANSPORTATION, INC.",
+    "",
+    `Date of service:  ${fmtDate(ride.pickup_at)}`,
+    `Pickup time:      ${fmtTime(ride.pickup_at)} PT`,
+    `Passenger:        ${ride.passenger_name}`,
+    `Pickup address:   ${ride.pickup_address}`,
+    `Dropoff address:  ${ride.dropoff_address ?? "—"}`,
+    `Vehicle:          ${vehicle ? `${vehicle.display_name}${vehicle.plate ? ` · ${vehicle.plate}` : ""}` : "—"}`,
+    `Driver:           ${driver.full_name}`,
+    "",
+    `Base fare ............... ${fmtMoney(ride.fare_cents)}`,
+    `Gratuity ................ ${fmtMoney(ride.gratuity_cents)}`,
+    `Parking & tolls ......... ${fmtMoney(ride.parking_cents)}`,
+    ...(extras.length > 0
+      ? [
+          ...extras.map(
+            (x) =>
+              `Extra: ${x.description.padEnd(14, ".").slice(0, 14)} +${fmtMoney(x.amount_cents ?? 0)}`,
+          ),
+        ]
+      : []),
+    `                          ─────────`,
+    `Total ................... ${fmtMoney(grandTotal)}`,
+    "",
+    `Billing terms:    ${ride.billing_terms ?? "—"}`,
+  ].join("\n");
+
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard?.writeText(lines);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <div className="p-5 space-y-3">
+      <div
+        className="text-muted"
+        style={{ fontSize: 12, lineHeight: 1.5 }}
+      >
+        Show this to law enforcement if requested. It's a DOT-style trip
+        ticket with no client billing details exposed.
       </div>
+      <div
+        className="rounded-[8px] p-4 mono"
+        style={{
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          fontSize: 12,
+          lineHeight: 1.6,
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {lines}
+      </div>
+      <button
+        onClick={onCopy}
+        className="w-full inline-flex items-center justify-center gap-2 rounded-[10px] h-10 text-[13.5px] font-medium"
+        style={{
+          background: "transparent",
+          border: "1px solid var(--border)",
+          color: copied ? "var(--success)" : "var(--text)",
+        }}
+      >
+        <Icon name={copied ? "check" : "copy"} size={14} />
+        {copied ? "Copied" : "Copy waybill text"}
+      </button>
     </div>
   );
 }
@@ -644,4 +1113,236 @@ function groupByBucket(rides: Ride[]) {
     )
     .forEach((r) => out[bucketOf(r.pickup_at)].push(r));
   return out;
+}
+
+/* ── Past + Profile sub-routes ─────────────────────────────────── */
+
+export function DriverPast() {
+  const [rides, setRides] = useState<Ride[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([listRides({ limit: 100 }), listVehicles()])
+      .then(([r, v]) => {
+        const past = r
+          .filter(
+            (x) =>
+              new Date(x.pickup_at).getTime() < Date.now() ||
+              x.status === "completed" ||
+              x.status === "cancelled",
+          )
+          .sort(
+            (a, b) =>
+              new Date(b.pickup_at).getTime() -
+              new Date(a.pickup_at).getTime(),
+          );
+        setRides(past);
+        setVehicles(v);
+      })
+      .catch((e) =>
+        setError(e instanceof Error ? e.message : "Failed to load"),
+      );
+  }, []);
+
+  const vMap = useMemo(
+    () => new Map(vehicles.map((v) => [v.id, v])),
+    [vehicles],
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <Link
+          to="/"
+          className="text-muted hover:text-text"
+          style={{ fontSize: 12.5 }}
+        >
+          <Icon name="back" size={13} /> Today
+        </Link>
+      </div>
+      <h1
+        style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}
+      >
+        Past rides
+      </h1>
+      {error ? (
+        <div className="text-danger text-sm">{error}</div>
+      ) : null}
+      {rides.length === 0 ? (
+        <div className="text-muted text-sm">Nothing yet.</div>
+      ) : (
+        <ul className="surface rounded-[12px] divide-y divide-border">
+          {rides.map((r) => {
+            const v = r.vehicle_id ? vMap.get(r.vehicle_id) : null;
+            return (
+              <li key={r.id} className="px-4 py-3 flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div
+                    className="truncate"
+                    style={{ fontSize: 14, fontWeight: 600 }}
+                  >
+                    {r.passenger_name}
+                  </div>
+                  <div
+                    className="text-muted truncate tabular"
+                    style={{ fontSize: 12 }}
+                  >
+                    {fmtDate(r.pickup_at)} · {fmtTime(r.pickup_at)}
+                    {v ? ` · ${v.display_name}` : ""}
+                  </div>
+                </div>
+                <StatusBadge status={r.status} />
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function DriverProfile() {
+  const { profile, session } = useAuth();
+  const [name, setName] = useState(profile?.full_name ?? "");
+  const [phone, setPhone] = useState(profile?.phone ?? "");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    setName(profile?.full_name ?? "");
+    setPhone(profile?.phone ?? "");
+  }, [profile?.full_name, profile?.phone]);
+
+  const save = async () => {
+    setSaving(true);
+    setMsg(null);
+    try {
+      await updateMyProfile({
+        full_name: name.trim() || null,
+        phone: phone.trim() || null,
+      });
+      setMsg("Saved");
+      setTimeout(() => setMsg(null), 1600);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-3">
+        <Link
+          to="/"
+          className="text-muted hover:text-text"
+          style={{ fontSize: 12.5 }}
+        >
+          <Icon name="back" size={13} /> Today
+        </Link>
+      </div>
+
+      <div className="flex items-center gap-4">
+        <Avatar name={name || "?"} size={56} />
+        <div className="min-w-0">
+          <h1
+            style={{
+              fontSize: 22,
+              fontWeight: 600,
+              letterSpacing: "-0.02em",
+            }}
+          >
+            {name || "Profile"}
+          </h1>
+          <div
+            className="text-muted truncate"
+            style={{ fontSize: 12.5 }}
+          >
+            {session?.user?.email}
+          </div>
+        </div>
+      </div>
+
+      <div className="surface rounded-[12px] p-5 space-y-4">
+        <Field label="Full name">
+          <input
+            className="field"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </Field>
+        <Field
+          label="Phone"
+          hint="Used for the Call/Message buttons clients see."
+          optional
+        >
+          <input
+            className="field tnum"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+1 (___) ___-____"
+          />
+        </Field>
+        <div className="flex items-center justify-between gap-3">
+          {msg ? (
+            <div
+              className="text-success"
+              style={{ fontSize: 12.5 }}
+            >
+              {msg}
+            </div>
+          ) : (
+            <span />
+          )}
+          <button
+            onClick={save}
+            disabled={saving}
+            className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-[8px] text-[13.5px] font-semibold disabled:opacity-50"
+            style={{
+              background: "var(--accent)",
+              color: "#15161B",
+              border: "1px solid var(--accent-strong)",
+            }}
+          >
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  optional,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  optional?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="label">
+        {label}
+        {optional ? (
+          <span
+            style={{
+              textTransform: "none",
+              fontWeight: 400,
+              marginLeft: 6,
+              color: "var(--text-muted)",
+            }}
+          >
+            · optional
+          </span>
+        ) : null}
+      </label>
+      {children}
+      {hint ? <div className="help">{hint}</div> : null}
+    </div>
+  );
 }
