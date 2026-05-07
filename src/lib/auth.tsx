@@ -16,6 +16,10 @@ type AuthCtx = {
   profile: Profile | null;
   configured: boolean;
   signInWithEmail: (email: string) => Promise<{ error: string | null }>;
+  verifyEmailCode: (
+    email: string,
+    code: string,
+  ) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 };
 
@@ -79,6 +83,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           options: {
             emailRedirectTo: `${window.location.origin}/`,
           },
+        });
+        return { error: error?.message ?? null };
+      },
+      verifyEmailCode: async (email: string, code: string) => {
+        const { error } = await supabase.auth.verifyOtp({
+          email,
+          token: code.trim(),
+          type: "email",
         });
         return { error: error?.message ?? null };
       },
