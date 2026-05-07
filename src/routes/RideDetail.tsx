@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import {
   addRideExtra,
   deleteRideExtra,
+  generatePacketText,
   getRide,
   listClients,
   listDrivers,
@@ -224,10 +225,16 @@ export function RideDetail() {
                 onExtrasChanged={reloadExtras}
               />
             ) : (
-              <CopyCard
+              <AIOrTemplateCard
+                kind={tab}
                 title={tabTitle(tab)}
                 subtitle={tabSubtitle(tab, ride)}
-                body={packets[tab]}
+                ride={ride}
+                driver={driver}
+                vehicle={vehicle}
+                client={client}
+                extras={extras}
+                fallback={packets[tab]}
               />
             )}
           </div>
@@ -702,24 +709,101 @@ function RightRail({
 
 /* ── Copy-ready packet card ──────────────────────────────────────── */
 
-function CopyCard({
+/* ── AI-or-template card: tries Anthropic, falls back to local template ─ */
+function AIOrTemplateCard({
+  kind,
   title,
   subtitle,
-  body,
+  ride,
+  driver,
+  vehicle,
+  client,
+  extras,
+  fallback,
 }: {
+  kind: "confirmation" | "briefing" | "waybill" | "invoice";
   title: string;
   subtitle?: string;
-  body: string;
+  ride: Ride;
+  driver: Driver | null;
+  vehicle: Vehicle | null;
+  client: Client | null;
+  extras: RideExtra[];
+  fallback: string;
 }) {
-  const [copied, setCopied] = useState(false);
-  const onCopy = () => {
+  const [body, setBody] = useState<string>(fallback);
+  const [model, setModel] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [aiAvailable, setAiAvailable] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset to template whenever the tab changes.
+  useEffect(() => {
+    setBody(fallback);
+    setModel(null);
+    setError(null);
+  }, [kind, fallback]);
+
+  const generate = async () => {
+    setGenerating(true);
+    setError(null);
     try {
-      navigator.clipboard?.writeText(body);
-    } catch {
-      /* ignore */
+      const ctx = {
+        ride: {
+          pickup_at: ride.pickup_at,
+          pickup_address: ride.pickup_address,
+          dropoff_address: ride.dropoff_address,
+          flight: ride.flight_number
+            ? `${ride.flight_airline ?? ""} ${ride.flight_number}${
+                ride.flight_status ? ` — ${ride.flight_status}` : ""
+              }`
+            : null,
+          fare_dollars: ride.fare_cents / 100,
+          gratuity_dollars: ride.gratuity_cents / 100,
+          parking_dollars: ride.parking_cents / 100,
+          total_dollars: ride.total_cents / 100,
+          billing_terms: ride.billing_terms,
+          notes: ride.notes,
+          passenger_name: ride.passenger_name,
+          passenger_phone: ride.passenger_phone,
+        },
+        driver: driver
+          ? { name: driver.full_name, phone: driver.phone }
+          : null,
+        vehicle: vehicle
+          ? { name: vehicle.display_name, plate: vehicle.plate }
+          : null,
+        client: client
+          ? {
+              name: client.name,
+              company: client.company,
+              email: client.email,
+            }
+          : null,
+        extras: extras.map((e) => ({
+          description: e.description,
+          dollars: (e.amount_cents ?? 0) / 100,
+        })),
+      };
+      const result = await generatePacketText(kind, ctx);
+      if (!result) {
+        setAiAvailable(false);
+        return;
+      }
+      setAiAvailable(true);
+      setBody(result.text);
+      setModel(result.model);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Generation failed");
+    } finally {
+      setGenerating(false);
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
+  };
+
+  const useTemplate = () => {
+    setBody(fallback);
+    setModel(null);
+    setError(null);
   };
 
   return (
@@ -737,49 +821,122 @@ function CopyCard({
             }}
           >
             {title}
+            {model ? (
+              <span
+                className="ml-2 chip"
+                style={{
+                  background: "transparent",
+                  color: "var(--accent)",
+                  fontSize: 10.5,
+                  borderColor:
+                    "color-mix(in oklab, var(--accent) 35%, var(--border))",
+                }}
+              >
+                <Icon name="spark" size={10} /> AI
+              </span>
+            ) : null}
           </h3>
           {subtitle ? (
-            <p
-              className="text-muted mt-0.5"
-              style={{ fontSize: 12.5 }}
-            >
+            <p className="text-muted mt-0.5" style={{ fontSize: 12.5 }}>
               {subtitle}
             </p>
           ) : null}
         </div>
-        <button
-          onClick={onCopy}
-          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[8px] text-[12.5px] font-medium transition shrink-0"
-          style={{
-            background: copied
-              ? "color-mix(in oklab, var(--success) 14%, transparent)"
-              : "transparent",
-            color: copied ? "var(--success)" : "var(--text)",
-            border: `1px solid ${
-              copied
-                ? "color-mix(in oklab, var(--success) 40%, var(--border))"
-                : "var(--border)"
-            }`,
-          }}
-          aria-live="polite"
-        >
-          {copied ? (
-            <>
-              <Icon name="check" size={13} />
-              <span className="pop-in">Copied</span>
-            </>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {!model ? (
+            <button
+              onClick={generate}
+              disabled={generating}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[8px] text-[12.5px] font-medium"
+              style={{
+                background:
+                  "color-mix(in oklab, var(--accent) 12%, transparent)",
+                color: "var(--accent)",
+                border:
+                  "1px solid color-mix(in oklab, var(--accent) 40%, var(--border))",
+              }}
+              title="Generate with Claude"
+            >
+              <Icon name="spark" size={12} />
+              {generating ? "Generating…" : "Generate with AI"}
+            </button>
           ) : (
-            <>
-              <Icon name="copy" size={13} />
-              Copy
-            </>
+            <button
+              onClick={useTemplate}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[8px] text-[12.5px] font-medium"
+              style={{
+                background: "transparent",
+                color: "var(--text-muted)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              Use template
+            </button>
           )}
-        </button>
+          <CopyButton body={body} />
+        </div>
       </header>
       <div className="p-5">
         <pre className="copy-block">{body}</pre>
+        {aiAvailable === false ? (
+          <div
+            className="mt-3 text-muted"
+            style={{ fontSize: 11.5, lineHeight: 1.5 }}
+          >
+            AI generation isn't configured on the server (no
+            ANTHROPIC_API_KEY). Showing the local template instead.
+          </div>
+        ) : null}
+        {error ? (
+          <div className="mt-3 text-danger" style={{ fontSize: 12 }}>
+            {error}
+          </div>
+        ) : null}
       </div>
     </article>
+  );
+}
+
+function CopyButton({ body }: { body: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard?.writeText(body);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* ignore */
+    }
+  };
+  return (
+    <button
+      onClick={onCopy}
+      className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[8px] text-[12.5px] font-medium transition"
+      style={{
+        background: copied
+          ? "color-mix(in oklab, var(--success) 14%, transparent)"
+          : "transparent",
+        color: copied ? "var(--success)" : "var(--text)",
+        border: `1px solid ${
+          copied
+            ? "color-mix(in oklab, var(--success) 40%, var(--border))"
+            : "var(--border)"
+        }`,
+      }}
+      aria-live="polite"
+    >
+      {copied ? (
+        <>
+          <Icon name="check" size={13} />
+          <span className="pop-in">Copied</span>
+        </>
+      ) : (
+        <>
+          <Icon name="copy" size={13} />
+          Copy
+        </>
+      )}
+    </button>
   );
 }
 

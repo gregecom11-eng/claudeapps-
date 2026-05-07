@@ -8,6 +8,7 @@ import { Icon, type IconName } from "./Icon";
 const TABS: { to: string; end?: boolean; label: string; icon: IconName }[] = [
   { to: "/", end: true, label: "Today", icon: "today" },
   { to: "/rides", label: "Rides", icon: "rides" },
+  { to: "/calendar", label: "Calendar", icon: "calendar" },
   { to: "/clients", label: "Clients", icon: "clients" },
   { to: "/drivers", label: "Drivers", icon: "drivers" },
   { to: "/invoices", label: "Invoices", icon: "invoice" },

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import {
   addRideExtra,
   claimDriverByEmail,
+  getOrgSettings,
   listRideExtras,
   listRides,
   listVehicles,
@@ -427,6 +428,13 @@ function RideSheet({
   const [tab, setTab] = useState<SheetTab>("briefing");
   const [extras, setExtras] = useState<RideExtra[]>([]);
   const [extrasErr, setExtrasErr] = useState<string | null>(null);
+  const [dispatchPhone, setDispatchPhone] = useState<string | null>(null);
+
+  useEffect(() => {
+    getOrgSettings()
+      .then((s) => setDispatchPhone(s.dispatch_phone ?? null))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     listRideExtras(ride.id)
@@ -549,6 +557,22 @@ function RideSheet({
               >
                 <Icon name="phone" size={16} /> Call{" "}
                 {firstName(ride.passenger_name)}
+              </a>
+            ) : null}
+
+            {dispatchPhone ? (
+              <a
+                href={`sms:${dispatchPhone}?body=${encodeURIComponent(
+                  `Re: ${ride.passenger_name} ride at ${fmtTime(ride.pickup_at)} — `,
+                )}`}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-[10px] h-11 text-[14px] font-medium"
+                style={{
+                  background: "transparent",
+                  color: "var(--text)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                <Icon name="phone" size={14} /> Message dispatch
               </a>
             ) : null}
 

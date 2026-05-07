@@ -6,6 +6,7 @@
 //                                   personal-account custom connectors)
 //   anything else                → static asset fallthrough (the dashboard SPA)
 
+import { handleGenerateRequest } from "./generate";
 import { handleInviteRequest } from "./invite";
 import { handleMcpRequest } from "./mcp";
 
@@ -14,6 +15,8 @@ export type Env = {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   MCP_API_KEY: string;
+  ANTHROPIC_API_KEY?: string;
+  ANTHROPIC_MODEL?: string;
 };
 
 export default {
@@ -38,6 +41,20 @@ export default {
         );
       }
       return handleInviteRequest(request, env);
+    }
+
+    // Owner-only: generate ride packet text via Anthropic.
+    if (url.pathname === "/api/generate") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders() });
+      }
+      if (request.method !== "POST") {
+        return Response.json(
+          { error: "method not allowed" },
+          { status: 405, headers: corsHeaders() },
+        );
+      }
+      return handleGenerateRequest(request, env);
     }
 
     // /api/mcp        (uses Authorization header)

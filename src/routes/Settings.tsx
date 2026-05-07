@@ -3,12 +3,14 @@ import {
   deleteClient,
   exportSnapshot,
   generateInviteLink,
+  getOrgSettings,
   listAllDrivers,
   listAllVehicles,
   listClients,
   setDriverActive,
   setVehicleActive,
   updateMyProfile,
+  updateOrgSettings,
   upsertClient,
   upsertDriver,
   upsertVehicle,
@@ -67,6 +69,7 @@ export function Settings() {
       </header>
 
       <AccountSection flash={flash} />
+      <OrgSection flash={flash} />
       <DriversSection flash={flash} />
       <VehiclesSection flash={flash} />
       <ClientsSection flash={flash} />
@@ -229,6 +232,90 @@ function AccountSection({ flash }: { flash: (m: string) => void }) {
       >
         <PrimaryBtn onClick={save} disabled={!dirty || saving}>
           {saving ? "Saving…" : "Save changes"}
+        </PrimaryBtn>
+      </div>
+    </Section>
+  );
+}
+
+/* ── Organization (dispatch contact, brand) ──────────────────────── */
+function OrgSection({ flash }: { flash: (m: string) => void }) {
+  const [brand, setBrand] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    getOrgSettings()
+      .then((s) => {
+        setBrand(s.brand_name ?? "");
+        setPhone(s.dispatch_phone ?? "");
+        setEmail(s.dispatch_email ?? "");
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await updateOrgSettings({
+        brand_name: brand.trim() || null,
+        dispatch_phone: phone.trim() || null,
+        dispatch_email: email.trim() || null,
+      });
+      flash("Organization saved");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section
+      eyebrow="01b — Organization"
+      title="Dispatch & brand"
+      subtitle="The number drivers can text from their app, and the name that appears on confirmations."
+    >
+      <div className="p-5 grid gap-4">
+        <Field label="Brand name">
+          <input
+            className="field"
+            value={brand}
+            onChange={(e) => setBrand(e.target.value)}
+            placeholder="SDLuxury Transportation, Inc."
+          />
+        </Field>
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field
+            label="Dispatch phone"
+            hint="Drivers' 'Message dispatch' button opens an SMS to this number."
+          >
+            <input
+              className="field tnum"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+1 (310) 555-0100"
+            />
+          </Field>
+          <Field label="Dispatch email" optional>
+            <input
+              type="email"
+              className="field"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </Field>
+        </div>
+      </div>
+      <div
+        className="flex items-center justify-end gap-2 px-5 py-3"
+        style={{ borderTop: "1px solid var(--border)" }}
+      >
+        <PrimaryBtn onClick={save} disabled={!loaded || saving}>
+          {saving ? "Saving…" : "Save"}
         </PrimaryBtn>
       </div>
     </Section>

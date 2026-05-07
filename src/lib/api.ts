@@ -339,6 +339,130 @@ export async function exportSnapshot(): Promise<{
   };
 }
 
+// ── Invoices ───────────────────────────────────────────────────────
+export async function listInvoices(): Promise<import("./types").Invoice[]> {
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as import("./types").Invoice[];
+}
+
+export async function nextInvoiceNumber(): Promise<string> {
+  const { data, error } = await supabase.rpc("next_invoice_number");
+  if (error) throw error;
+  return data as string;
+}
+
+export async function createInvoiceForRide(
+  rideId: string,
+  amount_cents: number,
+  terms?: import("./types").BillingTerms | null,
+  due_date?: string | null,
+): Promise<import("./types").Invoice> {
+  const number = await nextInvoiceNumber();
+  const { data, error } = await supabase
+    .from("invoices")
+    .insert({
+      ride_id: rideId,
+      number,
+      amount_cents,
+      terms: terms ?? null,
+      due_date: due_date ?? null,
+      status: "sent",
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as import("./types").Invoice;
+}
+
+export async function updateInvoice(
+  id: string,
+  patch: Partial<import("./types").Invoice>,
+): Promise<import("./types").Invoice> {
+  const { data, error } = await supabase
+    .from("invoices")
+    .update(patch)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as import("./types").Invoice;
+}
+
+export async function markInvoicePaid(id: string): Promise<void> {
+  await updateInvoice(id, {
+    status: "paid",
+    paid_at: new Date().toISOString(),
+  });
+}
+
+export async function deleteInvoice(id: string): Promise<void> {
+  const { error } = await supabase.from("invoices").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ── Org settings (singleton) ───────────────────────────────────────
+export async function getOrgSettings(): Promise<{
+  brand_name: string | null;
+  dispatch_phone: string | null;
+  dispatch_email: string | null;
+  invoice_prefix: string | null;
+}> {
+  const { data, error } = await supabase
+    .from("org_settings")
+    .select("brand_name, dispatch_phone, dispatch_email, invoice_prefix")
+    .eq("id", 1)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateOrgSettings(patch: {
+  brand_name?: string | null;
+  dispatch_phone?: string | null;
+  dispatch_email?: string | null;
+  invoice_prefix?: string | null;
+}): Promise<void> {
+  const { error } = await supabase
+    .from("org_settings")
+    .update(patch)
+    .eq("id", 1);
+  if (error) throw error;
+}
+
+// ── AI generation (server-side, falls back gracefully) ─────────────
+export async function generatePacketText(
+  kind: "confirmation" | "briefing" | "waybill" | "invoice",
+  context: Record<string, unknown>,
+): Promise<{ text: string; model: string } | null> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session) return null;
+  const res = await fetch("/api/generate", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ kind, context }),
+  });
+  if (res.status === 503) return null; // No API key configured.
+  const body = (await res.json()) as {
+    ok?: boolean;
+    text?: string;
+    model?: string;
+    error?: string;
+  };
+  if (!res.ok || !body.text) {
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return { text: body.text, model: body.model ?? "claude" };
+}
+
 export async function listEvents(limit = 30): Promise<ActivityEvent[]> {
   const { data, error } = await supabase
     .from("events")

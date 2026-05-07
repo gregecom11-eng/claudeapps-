@@ -45,6 +45,7 @@ export type Client = {
   default_billing: BillingTerms | null;
   preferences: Record<string, unknown>;
   notes: string | null;
+  profile_id: string | null;
   created_at: string;
   updated_at: string;
 };

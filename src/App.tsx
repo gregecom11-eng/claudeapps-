@@ -4,18 +4,17 @@ import { ClientShell } from "./components/ClientShell";
 import { DriverShell } from "./components/DriverShell";
 import { useAuth, AuthProvider } from "./lib/auth";
 import { Book } from "./routes/Book";
+import { Calendar } from "./routes/Calendar";
 import { Client } from "./routes/Client";
+import { Clients } from "./routes/Clients";
+import { Drivers } from "./routes/Drivers";
+import { Invoices } from "./routes/Invoices";
 import { Login } from "./routes/Login";
 import { Dashboard } from "./routes/Dashboard";
 import { Driver, DriverPast, DriverProfile } from "./routes/Driver";
 import { Rides } from "./routes/Rides";
 import { RideDetail } from "./routes/RideDetail";
 import { RideForm } from "./routes/RideForm";
-import {
-  ClientsStub,
-  DriversStub,
-  InvoicesStub,
-} from "./routes/Stub";
 import { Settings } from "./routes/Settings";
 
 export function App() {
@@ -88,9 +87,10 @@ function Gate() {
         <Route path="rides/new" element={<RideForm />} />
         <Route path="rides/:id" element={<RideDetail />} />
         <Route path="rides/:id/edit" element={<RideForm />} />
-        <Route path="clients" element={<ClientsStub />} />
-        <Route path="drivers" element={<DriversStub />} />
-        <Route path="invoices" element={<InvoicesStub />} />
+        <Route path="calendar" element={<Calendar />} />
+        <Route path="clients" element={<Clients />} />
+        <Route path="drivers" element={<Drivers />} />
+        <Route path="invoices" element={<Invoices />} />
         <Route path="settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
