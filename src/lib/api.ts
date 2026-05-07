@@ -11,6 +11,9 @@ import type {
   Vehicle,
 } from "./types";
 
+// Returns every ride visible to the caller (RLS scoped). Filters only by
+// pickup_at range and limit — intentionally NOT by source, driver_id, or
+// vehicle_id, so MCP-created rides and unassigned rides always appear.
 export async function listRides(opts?: {
   from?: string;
   to?: string;

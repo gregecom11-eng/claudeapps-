@@ -6,7 +6,7 @@ import {
   listRides,
   listVehicles,
 } from "../lib/api";
-import { fmtTime, relTime } from "../lib/format";
+import { BUSINESS_TZ, fmtTime, relTime } from "../lib/format";
 import { useAuth } from "../lib/auth";
 import { Button } from "../components/Button";
 import { Icon, type IconName } from "../components/Icon";
@@ -21,22 +21,51 @@ import type {
 
 type Bucket = "Morning" | "Afternoon" | "Evening";
 
+// LA-zoned hour, regardless of the viewer's browser TZ.
 function bucketOf(iso: string): Bucket {
-  const h = new Date(iso).getHours();
+  const h = parseInt(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: BUSINESS_TZ,
+      hour: "numeric",
+      hour12: false,
+    }).format(new Date(iso)),
+    10,
+  );
   if (h < 12) return "Morning";
   if (h < 18) return "Afternoon";
   return "Evening";
 }
 
-function startOfDay(d = new Date()): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
+// Start/end of "today" in LA, returned as UTC ISO strings ready for
+// comparison against the rides.pickup_at column. Independent of the
+// viewer's browser timezone — a dispatcher in Miami sees the LA day,
+// not their own.
+function laDayBounds(d = new Date()): { from: string; to: string } {
+  const dayParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d); // "2026-05-07"
+  const offset = laOffsetFor(d); // e.g. "-07:00"
+  return {
+    from: new Date(`${dayParts}T00:00:00${offset}`).toISOString(),
+    to: new Date(`${dayParts}T23:59:59.999${offset}`).toISOString(),
+  };
 }
-function endOfDay(d = new Date()): Date {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
+
+function laDayBoundsFor(d: Date): { from: string; to: string } {
+  return laDayBounds(d);
+}
+
+function laOffsetFor(d: Date): string {
+  const part = new Intl.DateTimeFormat("en-US", {
+    timeZone: BUSINESS_TZ,
+    timeZoneName: "longOffset",
+  })
+    .formatToParts(d)
+    .find((p) => p.type === "timeZoneName")?.value;
+  return part?.replace("GMT", "") || "+00:00"; // "-07:00" or "-08:00"
 }
 
 export function Dashboard() {
@@ -52,21 +81,18 @@ export function Dashboard() {
     let cancelled = false;
     (async () => {
       try {
+        const todayWindow = laDayBounds();
+        const tomorrowWindow = laDayBoundsFor(
+          new Date(Date.now() + 24 * 60 * 60 * 1000),
+        );
         const [todays, drvs, vcs, evs] = await Promise.all([
-          listRides({
-            from: startOfDay().toISOString(),
-            to: endOfDay().toISOString(),
-          }),
+          listRides(todayWindow),
           listDrivers(),
           listVehicles(),
           listEvents(8),
         ]);
-        const tomorrowStart = startOfDay(
-          new Date(Date.now() + 24 * 60 * 60 * 1000),
-        );
         const tomorrows = await listRides({
-          from: tomorrowStart.toISOString(),
-          to: endOfDay(tomorrowStart).toISOString(),
+          ...tomorrowWindow,
           limit: 1,
         });
         if (cancelled) return;

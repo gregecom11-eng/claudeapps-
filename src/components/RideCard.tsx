@@ -201,30 +201,66 @@ export function RideCard({ ride, driver, vehicle }: Props) {
         </div>
       ) : null}
 
-      {driver || vehicle ? (
-        <div className="mt-3 flex items-center gap-3 flex-wrap">
-          {driver ? (
-            <div className="flex items-center gap-2 min-w-0">
-              <Avatar name={driver.full_name} size={22} />
-              <span style={{ fontSize: 13, fontWeight: 500 }}>
-                {driver.full_name}
-              </span>
-            </div>
-          ) : null}
-          {driver && vehicle ? (
-            <span className="text-muted">·</span>
-          ) : null}
-          {vehicle ? (
-            <div className="flex items-center gap-2 min-w-0 text-muted">
-              <Icon name="car" size={14} />
-              <span className="tnum" style={{ fontSize: 12.5 }}>
-                {vehicle.display_name}
-                {vehicle.plate ? ` · ${vehicle.plate}` : ""}
-              </span>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      <div className="mt-3 flex items-center gap-3 flex-wrap">
+        {driver ? (
+          <div className="flex items-center gap-2 min-w-0">
+            <Avatar name={driver.full_name} size={22} />
+            <span style={{ fontSize: 13, fontWeight: 500 }}>
+              {driver.full_name}
+            </span>
+          </div>
+        ) : (
+          <span
+            className="chip"
+            style={{
+              background: "transparent",
+              color: "var(--warn)",
+              borderColor:
+                "color-mix(in oklab, var(--warn) 35%, var(--border))",
+              fontSize: 11,
+            }}
+          >
+            <Icon name="user" size={11} /> Unassigned driver
+          </span>
+        )}
+        {driver && vehicle ? <span className="text-muted">·</span> : null}
+        {vehicle ? (
+          <div className="flex items-center gap-2 min-w-0 text-muted">
+            <Icon name="car" size={14} />
+            <span className="tnum" style={{ fontSize: 12.5 }}>
+              {vehicle.display_name}
+              {vehicle.plate ? ` · ${vehicle.plate}` : ""}
+            </span>
+          </div>
+        ) : !driver ? null : (
+          <span
+            className="chip"
+            style={{
+              background: "transparent",
+              color: "var(--warn)",
+              borderColor:
+                "color-mix(in oklab, var(--warn) 35%, var(--border))",
+              fontSize: 11,
+            }}
+          >
+            <Icon name="car" size={11} /> Unassigned vehicle
+          </span>
+        )}
+        {ride.source && ride.source !== "manual" ? (
+          <span
+            className="chip text-muted"
+            style={{
+              background: "transparent",
+              fontSize: 10.5,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+            }}
+            title={`Created via ${ride.source}`}
+          >
+            via {ride.source}
+          </span>
+        ) : null}
+      </div>
 
       <footer
         className="mt-3 pt-3 flex items-center justify-between"
