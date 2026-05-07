@@ -1,14 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { listRides } from "../lib/api";
-import { fmtDate, fmtTime } from "../lib/format";
-import { StatusBadge } from "../components/StatusBadge";
-import type { Ride } from "../lib/types";
+import { listDrivers, listRides, listVehicles } from "../lib/api";
+import { fmtDate } from "../lib/format";
+import { Button } from "../components/Button";
+import { RideCard } from "../components/RideCard";
+import type { Driver, Ride, Vehicle } from "../lib/types";
 
 type Filter = "upcoming" | "past" | "all";
 
 export function Rides() {
   const [rides, setRides] = useState<Ride[]>([]);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [filter, setFilter] = useState<Filter>("upcoming");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -16,10 +19,12 @@ export function Rides() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    listRides({ limit: 200 })
-      .then((r) => {
+    Promise.all([listRides({ limit: 200 }), listDrivers(), listVehicles()])
+      .then(([r, d, v]) => {
         if (cancelled) return;
         setRides(r);
+        setDrivers(d);
+        setVehicles(v);
         setError(null);
       })
       .catch((e) => {
@@ -34,6 +39,15 @@ export function Rides() {
     };
   }, []);
 
+  const driversById = useMemo(
+    () => new Map(drivers.map((d) => [d.id, d])),
+    [drivers],
+  );
+  const vehiclesById = useMemo(
+    () => new Map(vehicles.map((v) => [v.id, v])),
+    [vehicles],
+  );
+
   const now = Date.now();
   const filtered = rides.filter((r) => {
     const t = new Date(r.pickup_at).getTime();
@@ -46,9 +60,31 @@ export function Rides() {
   const grouped = groupByDay(filtered);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h1 className="text-xl font-semibold tracking-tight">Rides</h1>
+    <div>
+      <div className="flex items-end justify-between gap-3 flex-wrap">
+        <div>
+          <div
+            className="text-muted"
+            style={{
+              fontSize: 12.5,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              fontWeight: 500,
+            }}
+          >
+            All rides
+          </div>
+          <h1
+            className="mt-1"
+            style={{
+              fontSize: 28,
+              fontWeight: 600,
+              letterSpacing: "-0.02em",
+            }}
+          >
+            Rides
+          </h1>
+        </div>
         <div className="flex items-center gap-2">
           <FilterChip
             value="upcoming"
@@ -65,52 +101,66 @@ export function Rides() {
             current={filter}
             onClick={() => setFilter("all")}
           />
-          <Link to="/rides/new" className="btn btn-primary">
-            + New
+          <Link to="/rides/new">
+            <Button variant="primary" icon="plus">
+              Add
+            </Button>
           </Link>
         </div>
       </div>
 
-      {error ? <div className="card text-danger">{error}</div> : null}
-      {loading ? <div className="text-muted text-sm">Loading…</div> : null}
+      {error ? (
+        <div className="mt-4 surface rounded-[12px] p-4 text-danger text-sm">
+          {error}
+        </div>
+      ) : null}
+      {loading ? (
+        <div className="mt-6 text-muted text-sm">Loading…</div>
+      ) : null}
 
-      {grouped.length === 0 && !loading ? (
-        <div className="card text-muted text-sm">
+      {!loading && grouped.length === 0 ? (
+        <div className="mt-6 surface rounded-[12px] p-8 text-center text-muted text-sm">
           No rides match this filter.
         </div>
       ) : null}
 
-      {grouped.map(([day, items]) => (
-        <section key={day} className="space-y-2">
-          <h2 className="text-xs uppercase tracking-wider text-muted">
-            {day}
-          </h2>
-          <ul className="card divide-y divide-border p-0">
-            {items.map((r) => (
-              <li key={r.id}>
-                <Link
-                  to={`/rides/${r.id}`}
-                  className="flex items-center gap-3 px-4 py-3 hover:bg-surface-2 transition"
-                >
-                  <div className="tabular text-sm font-medium w-16">
-                    {fmtTime(r.pickup_at)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">
-                      {r.passenger_name}
-                    </div>
-                    <div className="text-xs text-muted truncate">
-                      {r.pickup_address}
-                      {r.dropoff_address ? ` → ${r.dropoff_address}` : ""}
-                    </div>
-                  </div>
-                  <StatusBadge status={r.status} />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
+      <div className="mt-6 flex flex-col gap-7">
+        {grouped.map(([day, items]) => (
+          <section key={day}>
+            <div className="flex items-center gap-3 mb-3">
+              <h3
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                }}
+              >
+                {day}
+              </h3>
+              <span className="text-muted tnum" style={{ fontSize: 12 }}>
+                {items.length} {items.length === 1 ? "ride" : "rides"}
+              </span>
+              <div
+                className="flex-1 h-px"
+                style={{ background: "var(--border)" }}
+              />
+            </div>
+            <div className="flex flex-col gap-3">
+              {items.map((r) => (
+                <RideCard
+                  key={r.id}
+                  ride={r}
+                  driver={r.driver_id ? driversById.get(r.driver_id) : null}
+                  vehicle={
+                    r.vehicle_id ? vehiclesById.get(r.vehicle_id) : null
+                  }
+                />
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
@@ -128,10 +178,13 @@ function FilterChip({
   return (
     <button
       onClick={onClick}
-      className={[
-        "px-3 py-1.5 rounded-full text-sm capitalize transition",
-        active ? "bg-surface-2 text-text" : "text-muted hover:text-text",
-      ].join(" ")}
+      className="inline-flex items-center h-8 px-3 rounded-[8px] text-[13px] capitalize transition"
+      style={{
+        color: active ? "var(--text)" : "var(--text-muted)",
+        background: active ? "var(--surface-2)" : "transparent",
+        border: active ? "1px solid var(--border)" : "1px solid transparent",
+        fontWeight: active ? 600 : 500,
+      }}
     >
       {value}
     </button>
