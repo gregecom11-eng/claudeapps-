@@ -13,6 +13,7 @@ import { Invoices } from "./routes/Invoices";
 import { Login } from "./routes/Login";
 import { Dashboard } from "./routes/Dashboard";
 import { Driver, DriverPast, DriverProfile } from "./routes/Driver";
+import { DriverUpcoming } from "./routes/DriverUpcoming";
 import { Rides } from "./routes/Rides";
 import { RideDetail } from "./routes/RideDetail";
 import { RideForm } from "./routes/RideForm";
@@ -62,6 +63,7 @@ function Gate() {
       <Routes>
         <Route element={<DriverShell />}>
           <Route index element={<Driver />} />
+          <Route path="upcoming" element={<DriverUpcoming />} />
           <Route path="past" element={<DriverPast />} />
           <Route path="profile" element={<DriverProfile />} />
           <Route path="*" element={<Navigate to="/" replace />} />

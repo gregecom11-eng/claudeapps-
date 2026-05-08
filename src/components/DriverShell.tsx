@@ -8,6 +8,7 @@ import { InstallBanner } from "./InstallBanner";
 
 const TABS: { to: string; end?: boolean; label: string; icon: IconName }[] = [
   { to: "/", end: true, label: "Today", icon: "today" },
+  { to: "/upcoming", label: "Upcoming", icon: "calendar" },
   { to: "/past", label: "Past", icon: "rides" },
   { to: "/profile", label: "Profile", icon: "user" },
 ];
