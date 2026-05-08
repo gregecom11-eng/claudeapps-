@@ -199,15 +199,16 @@ function UpcomingRideCard({
               {ride.dropoff_address ? ` → ${ride.dropoff_address}` : ""}
             </div>
           </div>
-          <Icon
-            name="chev"
-            size={14}
+          <span
             className="text-muted shrink-0"
             style={{
+              display: "inline-flex",
               transform: open ? "rotate(90deg)" : "rotate(0)",
               transition: "transform 180ms",
             }}
-          />
+          >
+            <Icon name="chev" size={14} />
+          </span>
         </div>
       </button>
 
