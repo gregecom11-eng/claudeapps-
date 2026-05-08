@@ -5,12 +5,14 @@ import {
   getRide,
   listClients,
   listDrivers,
+  listRides,
   listVehicles,
   upsertRide,
 } from "../lib/api";
 import { dollarsToCents } from "../lib/format";
 import { Avatar } from "../components/Avatar";
 import { Icon, type IconName } from "../components/Icon";
+import { useConfirm, useToast } from "../components/Notify";
 import type {
   BillingTerms,
   Client,
@@ -98,6 +100,8 @@ export function RideForm() {
   const { id } = useParams<{ id?: string }>();
   const editing = Boolean(id && id !== "new");
   const navigate = useNavigate();
+  const toast = useToast();
+  const confirm = useConfirm();
 
   const [form, setForm] = useState<FormState>(EMPTY);
   const [clients, setClients] = useState<Client[]>([]);
@@ -139,6 +143,52 @@ export function RideForm() {
     const n = (s: string) => parseFloat(s || "0") || 0;
     return n(form.fare) + n(form.gratuity) + n(form.parking);
   }, [form.fare, form.gratuity, form.parking]);
+
+  // Soft conflict detection — warn if driver or vehicle is already
+  // booked in a ±90 min window around this ride's pickup time. Doesn't
+  // block save; the operator may still want to proceed.
+  const [conflicts, setConflicts] = useState<Ride[]>([]);
+  useEffect(() => {
+    if (!form.pickup_date || !form.pickup_time) {
+      setConflicts([]);
+      return;
+    }
+    if (!form.driver_id && !form.vehicle_id) {
+      setConflicts([]);
+      return;
+    }
+    const center = new Date(`${form.pickup_date}T${form.pickup_time}`);
+    if (Number.isNaN(center.getTime())) {
+      setConflicts([]);
+      return;
+    }
+    const from = new Date(center.getTime() - 90 * 60 * 1000).toISOString();
+    const to = new Date(center.getTime() + 90 * 60 * 1000).toISOString();
+    let cancelled = false;
+    listRides({ from, to, limit: 50 })
+      .then((rs) => {
+        if (cancelled) return;
+        const hits = rs.filter((r) => {
+          if (id && r.id === id) return false; // ignore self when editing
+          if (r.status === "cancelled") return false;
+          const same =
+            (form.driver_id && r.driver_id === form.driver_id) ||
+            (form.vehicle_id && r.vehicle_id === form.vehicle_id);
+          return Boolean(same);
+        });
+        setConflicts(hits);
+      })
+      .catch(() => setConflicts([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    form.pickup_date,
+    form.pickup_time,
+    form.driver_id,
+    form.vehicle_id,
+    id,
+  ]);
 
   const isValid =
     form.passenger_name.trim() &&
@@ -189,12 +239,19 @@ export function RideForm() {
 
   const onDelete = async () => {
     if (!id || id === "new") return;
-    if (!confirm("Delete this ride? This cannot be undone.")) return;
+    const ok = await confirm({
+      title: "Delete this ride?",
+      body: "This can't be undone. Past records of completed rides will be lost.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await deleteRide(id);
+      toast.success("Ride deleted");
       navigate("/rides");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Delete failed");
+      toast.error(e instanceof Error ? e.message : "Delete failed");
     }
   };
 
@@ -692,6 +749,58 @@ export function RideForm() {
               <span className="tnum">{form.notes.length}/500</span>
             </div>
           </Section>
+
+          {conflicts.length > 0 ? (
+            <div
+              className="rounded-[12px] p-4 text-sm"
+              style={{
+                background:
+                  "color-mix(in oklab, var(--warn) 12%, var(--surface))",
+                border:
+                  "1px solid color-mix(in oklab, var(--warn) 35%, var(--border))",
+                color: "var(--text)",
+              }}
+            >
+              <div className="flex items-start gap-2">
+                <Icon
+                  name="info"
+                  size={14}
+                  className="text-warn shrink-0 mt-0.5"
+                />
+                <div className="flex-1 min-w-0">
+                  <div style={{ fontWeight: 600 }}>
+                    Heads up — possible double-booking
+                  </div>
+                  <div className="text-muted mt-1" style={{ fontSize: 12.5 }}>
+                    The selected driver or vehicle is on{" "}
+                    {conflicts.length === 1
+                      ? "another ride"
+                      : `${conflicts.length} other rides`}{" "}
+                    within ±90 min of this pickup. You can still save — this
+                    is just a warning.
+                  </div>
+                  <ul
+                    className="mt-2 space-y-1 tabular"
+                    style={{ fontSize: 12.5 }}
+                  >
+                    {conflicts.slice(0, 3).map((c) => (
+                      <li key={c.id}>
+                        ·{" "}
+                        {new Date(c.pickup_at).toLocaleString("en-US", {
+                          hour: "numeric",
+                          minute: "2-digit",
+                          weekday: "short",
+                          month: "short",
+                          day: "numeric",
+                        })}{" "}
+                        — {c.passenger_name}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {error ? (
             <div className="surface rounded-[12px] p-4 text-danger text-sm">

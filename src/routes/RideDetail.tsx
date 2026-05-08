@@ -14,6 +14,7 @@ import {
 import { fmtDateTime, fmtMoney, fmtTime } from "../lib/format";
 import { Avatar } from "../components/Avatar";
 import { Icon, type IconName } from "../components/Icon";
+import { useConfirm, useToast } from "../components/Notify";
 import { StatusBadge } from "../components/StatusBadge";
 import type {
   RideExtra,
@@ -44,6 +45,7 @@ export function RideDetail() {
   const [tab, setTab] = useState<TabId>("overview");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   const reloadExtras = () => {
     if (!id) return;
@@ -56,11 +58,10 @@ export function RideDetail() {
     (async () => {
       try {
         const r = await getRide(id);
-        if (cancelled || !r) {
-          setRide(r);
-          return;
-        }
+        if (cancelled) return;
         setRide(r);
+        setLoaded(true);
+        if (!r) return;
         const [clients, drivers, vehicles] = await Promise.all([
           listClients(),
           listDrivers(),
@@ -73,8 +74,10 @@ export function RideDetail() {
         const ex = await listRideExtras(r.id);
         if (!cancelled) setExtras(ex);
       } catch (e) {
-        if (!cancelled)
+        if (!cancelled) {
           setError(e instanceof Error ? e.message : "Failed to load");
+          setLoaded(true);
+        }
       }
     })();
     return () => {
@@ -104,6 +107,52 @@ export function RideDetail() {
     return (
       <div className="surface rounded-[12px] p-4 text-danger text-sm">
         {error}
+      </div>
+    );
+  if (loaded && !ride)
+    return (
+      <div className="surface rounded-[12px] p-8 text-center space-y-4">
+        <div
+          className="inline-grid place-items-center mx-auto"
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 999,
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            color: "var(--text-muted)",
+          }}
+        >
+          <Icon name="x" size={20} />
+        </div>
+        <div>
+          <h2
+            style={{
+              fontSize: 18,
+              fontWeight: 600,
+              letterSpacing: "-0.01em",
+            }}
+          >
+            Ride not found
+          </h2>
+          <p
+            className="text-muted mt-1"
+            style={{ fontSize: 13.5 }}
+          >
+            It may have been deleted, or this link is wrong.
+          </p>
+        </div>
+        <Link
+          to="/rides"
+          className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-[8px] text-[13.5px] font-semibold"
+          style={{
+            background: "var(--accent)",
+            color: "#15161B",
+            border: "1px solid var(--accent-strong)",
+          }}
+        >
+          Back to all rides
+        </Link>
       </div>
     );
   if (!ride || !packets)
@@ -994,10 +1043,23 @@ function ExtrasCard({
     }
   };
 
+  const toast = useToast();
+  const confirm = useConfirm();
+
   const remove = async (id: string) => {
-    if (!confirm("Remove this extra?")) return;
-    await deleteRideExtra(id);
-    onChanged();
+    const ok = await confirm({
+      title: "Remove this extra?",
+      confirmLabel: "Remove",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteRideExtra(id);
+      toast.success("Removed");
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't remove");
+    }
   };
 
   return (

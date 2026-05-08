@@ -84,6 +84,23 @@ body {
 }
 .pop-in { animation: pop 160ms ease-out both; }
 
+/* Loading skeleton shimmer */
+@keyframes shimmer {
+  0%   { background-position: -200px 0; }
+  100% { background-position: calc(200px + 100%) 0; }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 0%,
+    color-mix(in oklab, var(--surface-2) 60%, var(--border) 40%) 50%,
+    var(--surface-2) 100%
+  );
+  background-size: 200px 100%;
+  background-repeat: no-repeat;
+  animation: shimmer 1.4s infinite linear;
+}
+
 /* Chip/badge base */
 .chip {
   display: inline-flex; align-items: center; gap: 6px;

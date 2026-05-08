@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   addRideExtra,
@@ -13,9 +13,14 @@ import {
 import { useAuth } from "../lib/auth";
 import { downloadICS } from "../lib/calendar";
 import { BUSINESS_TZ, fmtDate, fmtMoney, fmtTime } from "../lib/format";
+import {
+  useRideExtrasRealtime,
+  useRideRealtime,
+} from "../lib/realtime";
 import { Avatar } from "../components/Avatar";
 import { Icon, type IconName } from "../components/Icon";
 import { PushToggle } from "../components/PushToggle";
+import { RideRowSkeleton } from "../components/Skeleton";
 import { StatusBadge } from "../components/StatusBadge";
 import type {
   Driver as DriverType,
@@ -91,7 +96,7 @@ export function Driver() {
     };
   }, [session]);
 
-  const reload = () => {
+  const reload = useCallback(() => {
     const todayWindow = laDayBoundsFor();
     const tomorrowWindow = laDayBoundsFor(
       new Date(Date.now() + 24 * 60 * 60 * 1000),
@@ -110,11 +115,14 @@ export function Driver() {
       .catch((e) =>
         setError(e instanceof Error ? e.message : "Failed to load"),
       );
-  };
+  }, []);
   useEffect(() => {
     if (linked === "loading") return;
     reload();
-  }, [linked]);
+  }, [linked, reload]);
+
+  // Realtime — refresh when ANY ride visible to this driver changes.
+  useRideRealtime(reload);
 
   const vehiclesById = useMemo(
     () => new Map(vehicles.map((v) => [v.id, v])),
@@ -171,6 +179,13 @@ export function Driver() {
       {error ? (
         <div className="surface rounded-[12px] p-4 text-danger text-sm">
           {error}
+        </div>
+      ) : null}
+
+      {today === null ? (
+        <div className="space-y-3">
+          <RideRowSkeleton />
+          <RideRowSkeleton />
         </div>
       ) : null}
 
@@ -447,6 +462,8 @@ function RideSheet({
 
   const reloadExtras = () =>
     listRideExtras(ride.id).then(setExtras).catch(() => {});
+
+  useRideExtrasRealtime(ride.id, reloadExtras);
 
   const mapsUrl = (addr: string) =>
     `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}`;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   listDrivers,
@@ -8,10 +8,12 @@ import {
 } from "../lib/api";
 import { BUSINESS_TZ, fmtTime, relTime } from "../lib/format";
 import { useAuth } from "../lib/auth";
+import { useEventsRealtime, useRideRealtime } from "../lib/realtime";
 import { Button } from "../components/Button";
 import { Icon, type IconName } from "../components/Icon";
 import { KpiCard } from "../components/KpiCard";
 import { RideCard } from "../components/RideCard";
+import { RideRowSkeleton } from "../components/Skeleton";
 import type {
   ActivityEvent,
   Driver,
@@ -77,40 +79,62 @@ export function Dashboard() {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  const loadRides = useCallback(async () => {
+    try {
+      const todayWindow = laDayBounds();
+      const tomorrowWindow = laDayBoundsFor(
+        new Date(Date.now() + 24 * 60 * 60 * 1000),
+      );
+      const [todays, tomorrows] = await Promise.all([
+        listRides(todayWindow),
+        listRides({ ...tomorrowWindow, limit: 1 }),
+      ]);
+      setToday(todays);
+      setTomorrowFirst(tomorrows[0] ?? null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load");
+    }
+  }, []);
+
+  const loadEvents = useCallback(async () => {
+    try {
+      setEvents(await listEvents(8));
+    } catch {
+      /* silent — feed is best-effort */
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const todayWindow = laDayBounds();
-        const tomorrowWindow = laDayBoundsFor(
-          new Date(Date.now() + 24 * 60 * 60 * 1000),
-        );
-        const [todays, drvs, vcs, evs] = await Promise.all([
-          listRides(todayWindow),
+        const [drvs, vcs] = await Promise.all([
           listDrivers(),
           listVehicles(),
-          listEvents(8),
         ]);
-        const tomorrows = await listRides({
-          ...tomorrowWindow,
-          limit: 1,
-        });
         if (cancelled) return;
-        setToday(todays);
         setDrivers(drvs);
         setVehicles(vcs);
-        setEvents(evs);
-        setTomorrowFirst(tomorrows[0] ?? null);
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Failed to load");
         }
       }
     })();
+    void loadRides();
+    void loadEvents();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadRides, loadEvents]);
+
+  // Realtime: refetch the affected slice when rides or events change.
+  useRideRealtime(() => {
+    void loadRides();
+  });
+  useEventsRealtime(() => {
+    void loadEvents();
+  });
 
   const driversById = useMemo(
     () => new Map(drivers.map((d) => [d.id, d])),
@@ -221,8 +245,10 @@ export function Dashboard() {
       <section className="mt-7 grid gap-5 lg:gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div>
           {today === null ? (
-            <div className="surface rounded-[12px] p-6 text-muted text-sm">
-              Loading today's rides…
+            <div className="flex flex-col gap-3">
+              <RideRowSkeleton />
+              <RideRowSkeleton />
+              <RideRowSkeleton />
             </div>
           ) : kpis.total === 0 ? (
             <EmptyToday />
@@ -650,14 +676,8 @@ function ActivityFeed({ items }: { items: ActivityEvent[] }) {
         <ul>
           {items.map((it, i) => {
             const m = KIND_META[it.source] ?? KIND_META.system;
-            return (
-              <li
-                key={it.id}
-                className="flex items-start gap-3 px-5 py-3"
-                style={{
-                  borderTop: i === 0 ? "none" : "1px solid var(--border)",
-                }}
-              >
+            const inner = (
+              <>
                 <span
                   className="inline-grid place-items-center mt-0.5"
                   style={{
@@ -683,6 +703,34 @@ function ActivityFeed({ items }: { items: ActivityEvent[] }) {
                     {relTime(it.created_at)}
                   </div>
                 </div>
+                {it.ride_id ? (
+                  <Icon
+                    name="chev"
+                    size={13}
+                    className="text-muted shrink-0 mt-1"
+                  />
+                ) : null}
+              </>
+            );
+            return (
+              <li
+                key={it.id}
+                style={{
+                  borderTop: i === 0 ? "none" : "1px solid var(--border)",
+                }}
+              >
+                {it.ride_id ? (
+                  <Link
+                    to={`/rides/${it.ride_id}`}
+                    className="flex items-start gap-3 px-5 py-3 hover:bg-surface-2 transition"
+                  >
+                    {inner}
+                  </Link>
+                ) : (
+                  <div className="flex items-start gap-3 px-5 py-3">
+                    {inner}
+                  </div>
+                )}
               </li>
             );
           })}
