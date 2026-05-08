@@ -9,6 +9,7 @@ import {
 } from "../lib/api";
 import { fmtDate, fmtMoney } from "../lib/format";
 import { Icon } from "../components/Icon";
+import { useConfirm, useToast } from "../components/Notify";
 import type { Invoice, InvoiceStatus, Ride } from "../lib/types";
 
 type Filter = "open" | "overdue" | "paid" | "all";
@@ -330,12 +331,17 @@ function InvoiceRowActions({
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const confirm = useConfirm();
 
   const onPaid = async () => {
     setBusy(true);
     try {
       await markInvoicePaid(invoice.id);
+      toast.success(`Invoice ${invoice.number ?? ""} marked paid`);
       onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't mark paid");
     } finally {
       setBusy(false);
     }
@@ -363,11 +369,20 @@ function InvoiceRowActions({
   };
 
   const onDelete = async () => {
-    if (!confirm(`Delete invoice ${invoice.number ?? "draft"}?`)) return;
+    const ok = await confirm({
+      title: `Delete invoice ${invoice.number ?? "draft"}?`,
+      body: "This removes the invoice record. The associated ride is unaffected.",
+      confirmLabel: "Delete invoice",
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await deleteInvoice(invoice.id);
+      toast.success("Invoice deleted");
       onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Delete failed");
     } finally {
       setBusy(false);
     }

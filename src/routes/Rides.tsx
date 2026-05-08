@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { listDrivers, listRides, listVehicles } from "../lib/api";
 import { fmtDate } from "../lib/format";
+import { useRideRealtime } from "../lib/realtime";
 import { Button } from "../components/Button";
+import { Icon } from "../components/Icon";
 import { RideCard } from "../components/RideCard";
+import { RideRowSkeleton } from "../components/Skeleton";
 import type { Driver, Ride, Vehicle } from "../lib/types";
 
 type Filter = "upcoming" | "past" | "all";
@@ -13,31 +16,30 @@ export function Rides() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [filter, setFilter] = useState<Filter>("upcoming");
+  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+  const reload = () => {
     Promise.all([listRides({ limit: 200 }), listDrivers(), listVehicles()])
       .then(([r, d, v]) => {
-        if (cancelled) return;
         setRides(r);
         setDrivers(d);
         setVehicles(v);
         setError(null);
       })
-      .catch((e) => {
-        if (!cancelled)
-          setError(e instanceof Error ? e.message : "Failed to load");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+      .catch((e) =>
+        setError(e instanceof Error ? e.message : "Failed to load"),
+      )
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    setLoading(true);
+    reload();
   }, []);
+
+  useRideRealtime(reload);
 
   const driversById = useMemo(
     () => new Map(drivers.map((d) => [d.id, d])),
@@ -49,10 +51,24 @@ export function Rides() {
   );
 
   const now = Date.now();
+  const q = query.trim().toLowerCase();
   const filtered = rides.filter((r) => {
     const t = new Date(r.pickup_at).getTime();
-    if (filter === "upcoming") return t >= now;
-    if (filter === "past") return t < now;
+    if (filter === "upcoming" && t < now) return false;
+    if (filter === "past" && t >= now) return false;
+    if (q) {
+      const hay = [
+        r.passenger_name,
+        r.passenger_phone ?? "",
+        r.pickup_address,
+        r.dropoff_address ?? "",
+        r.notes ?? "",
+        r.flight_number ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     return true;
   });
   if (filter === "past") filtered.reverse();
@@ -109,18 +125,56 @@ export function Rides() {
         </div>
       </div>
 
+      {/* Search */}
+      <div className="mt-5 relative">
+        <span
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"
+          style={{ pointerEvents: "none" }}
+        >
+          <Icon name="search" size={14} />
+        </span>
+        <input
+          className="field field-prefixed"
+          placeholder="Search by passenger, address, flight, notes…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {query ? (
+          <button
+            type="button"
+            onClick={() => setQuery("")}
+            aria-label="Clear search"
+            className="absolute right-2 top-1/2 -translate-y-1/2 inline-grid place-items-center"
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 6,
+              color: "var(--text-muted)",
+            }}
+          >
+            <Icon name="x" size={12} />
+          </button>
+        ) : null}
+      </div>
+
       {error ? (
         <div className="mt-4 surface rounded-[12px] p-4 text-danger text-sm">
           {error}
         </div>
       ) : null}
       {loading ? (
-        <div className="mt-6 text-muted text-sm">Loading…</div>
+        <div className="mt-6 flex flex-col gap-3">
+          <RideRowSkeleton />
+          <RideRowSkeleton />
+          <RideRowSkeleton />
+        </div>
       ) : null}
 
       {!loading && grouped.length === 0 ? (
         <div className="mt-6 surface rounded-[12px] p-8 text-center text-muted text-sm">
-          No rides match this filter.
+          {query
+            ? `No rides match "${query}".`
+            : "No rides match this filter."}
         </div>
       ) : null}
 

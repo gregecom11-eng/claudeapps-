@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { ClientShell } from "./components/ClientShell";
 import { DriverShell } from "./components/DriverShell";
+import { Notify } from "./components/Notify";
 import { useAuth, AuthProvider } from "./lib/auth";
 import { Book } from "./routes/Book";
 import { Calendar } from "./routes/Calendar";
@@ -30,6 +31,7 @@ export function App() {
           {/* Everything else goes through the auth + role gate */}
           <Route path="/*" element={<Gate />} />
         </Routes>
+        <Notify />
       </BrowserRouter>
     </AuthProvider>
   );
