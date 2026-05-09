@@ -12,21 +12,26 @@ import type { Ride, Vehicle } from "../lib/types";
 // by day. Read-only — actionable buttons (On my way / Arrived /
 // Completed) live on Today. Drivers come here to plan ahead.
 
+type FilterKey = "all" | "airport" | "notes";
+
 export function DriverUpcoming() {
   const [rides, setRides] = useState<Ride[] | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FilterKey>("all");
 
   useEffect(() => {
-    // Tomorrow 00:00 LA → 30 days out.
-    const startOfTomorrowLA = (() => {
+    // Start at 00:00 LA *today* so today's remaining rides surface in a
+    // dedicated "Today" group (status filter below removes already-done
+    // ones). Window: today → 30 days out.
+    const startOfTodayLA = (() => {
       const dayStr = new Intl.DateTimeFormat("en-CA", {
         timeZone: BUSINESS_TZ,
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
-      }).format(new Date(Date.now() + 24 * 60 * 60 * 1000));
+      }).format(new Date());
       const off = laOffsetFor(new Date());
       return new Date(`${dayStr}T00:00:00${off}`).toISOString();
     })();
@@ -36,7 +41,7 @@ export function DriverUpcoming() {
 
     Promise.all([
       listRides({
-        from: startOfTomorrowLA,
+        from: startOfTodayLA,
         to: in30days,
         limit: 200,
       }),
@@ -60,7 +65,24 @@ export function DriverUpcoming() {
     [vehicles],
   );
 
-  const grouped = useMemo(() => groupByLADay(rides ?? []), [rides]);
+  const counts = useMemo(() => {
+    const all = rides ?? [];
+    return {
+      all: all.length,
+      airport: all.filter(rideIsAirport).length,
+      notes: all.filter((r) => (r.notes ?? "").trim().length > 0).length,
+    };
+  }, [rides]);
+
+  const filtered = useMemo(() => {
+    const all = rides ?? [];
+    if (filter === "airport") return all.filter(rideIsAirport);
+    if (filter === "notes")
+      return all.filter((r) => (r.notes ?? "").trim().length > 0);
+    return all;
+  }, [rides, filter]);
+
+  const grouped = useMemo(() => groupByLADay(filtered), [filtered]);
 
   return (
     <div className="space-y-6">
@@ -89,7 +111,7 @@ export function DriverUpcoming() {
           {rides === null
             ? "Loading…"
             : rides.length === 0
-            ? "Nothing scheduled past today. You'll see future rides here as they come in."
+            ? "Nothing scheduled. You'll see assigned rides here as they come in."
             : `${rides.length} ${rides.length === 1 ? "ride" : "rides"} on the books across the next 30 days.`}
         </p>
       </div>
@@ -100,8 +122,25 @@ export function DriverUpcoming() {
         </div>
       ) : null}
 
-      {grouped.map(([dayLabel, items]) => (
-        <section key={dayLabel}>
+      {rides && rides.length > 0 ? (
+        <FilterPills
+          value={filter}
+          counts={counts}
+          onChange={setFilter}
+        />
+      ) : null}
+
+      {rides && rides.length > 0 && filtered.length === 0 ? (
+        <div
+          className="surface rounded-[12px] p-5 text-center text-muted"
+          style={{ fontSize: 13.5 }}
+        >
+          No rides match this filter.
+        </div>
+      ) : null}
+
+      {grouped.map(({ key, label, items }) => (
+        <section key={key}>
           <div className="flex items-center gap-3 mb-3">
             <Icon name="calendar" size={14} className="text-muted" />
             <h2
@@ -112,7 +151,7 @@ export function DriverUpcoming() {
                 textTransform: "uppercase",
               }}
             >
-              {dayLabel}
+              {label}
             </h2>
             <span
               className="text-muted tnum"
@@ -124,6 +163,18 @@ export function DriverUpcoming() {
               className="flex-1 h-px"
               style={{ background: "var(--border)" }}
             />
+            {items.length >= 2 ? (
+              <a
+                href={multiStopMapsUrl(items)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-accent shrink-0"
+                style={{ fontSize: 12, fontWeight: 600 }}
+                title="Open all of this day's pickups in Google Maps"
+              >
+                <Icon name="pin" size={12} /> Plan day
+              </a>
+            ) : null}
           </div>
           <ul className="space-y-3">
             {items.map((r) => {
@@ -143,6 +194,61 @@ export function DriverUpcoming() {
           </ul>
         </section>
       ))}
+    </div>
+  );
+}
+
+/* ── Filter pills ────────────────────────────────────────────────── */
+function FilterPills({
+  value,
+  counts,
+  onChange,
+}: {
+  value: FilterKey;
+  counts: Record<FilterKey, number>;
+  onChange: (k: FilterKey) => void;
+}) {
+  const opts: { key: FilterKey; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "airport", label: "Airport" },
+    { key: "notes", label: "Has notes" },
+  ];
+  return (
+    <div className="flex gap-2 overflow-x-auto" role="tablist">
+      {opts.map((o) => {
+        const active = value === o.key;
+        const n = counts[o.key];
+        const disabled = !active && n === 0;
+        return (
+          <button
+            key={o.key}
+            role="tab"
+            aria-selected={active}
+            disabled={disabled}
+            onClick={() => onChange(o.key)}
+            className="chip shrink-0"
+            style={{
+              cursor: disabled ? "default" : "pointer",
+              opacity: disabled ? 0.4 : 1,
+              background: active ? "var(--accent)" : "transparent",
+              color: active ? "#15161B" : "var(--text)",
+              borderColor: active ? "var(--accent-strong)" : "var(--border)",
+              fontWeight: active ? 600 : 500,
+            }}
+          >
+            {o.label}
+            <span
+              className="tnum"
+              style={{
+                fontSize: 11,
+                opacity: 0.7,
+              }}
+            >
+              {n}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -346,7 +452,17 @@ function laOffsetFor(d: Date): string {
   return part?.replace("GMT", "") || "+00:00";
 }
 
-function laDayLabel(iso: string): string {
+// "2026-05-09" in LA — used as a stable bucket key.
+function laDayKey(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(iso));
+}
+
+function laDayPretty(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", {
     timeZone: BUSINESS_TZ,
     weekday: "short",
@@ -355,17 +471,69 @@ function laDayLabel(iso: string): string {
   });
 }
 
-function groupByLADay(rides: Ride[]): [string, Ride[]][] {
+type DayGroup = { key: string; label: string; items: Ride[] };
+
+function groupByLADay(rides: Ride[]): DayGroup[] {
   const sorted = rides
     .slice()
     .sort(
       (a, b) =>
         new Date(a.pickup_at).getTime() - new Date(b.pickup_at).getTime(),
     );
+  const todayKey = laDayKey(new Date().toISOString());
+  const tomorrowKey = laDayKey(
+    new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  );
   const map = new Map<string, Ride[]>();
   for (const r of sorted) {
-    const day = laDayLabel(r.pickup_at);
-    map.set(day, [...(map.get(day) ?? []), r]);
+    const key = laDayKey(r.pickup_at);
+    map.set(key, [...(map.get(key) ?? []), r]);
   }
-  return [...map.entries()];
+  return [...map.entries()].map(([key, items]) => {
+    const label =
+      key === todayKey
+        ? "Today"
+        : key === tomorrowKey
+        ? "Tomorrow"
+        : laDayPretty(items[0].pickup_at);
+    return { key, label, items };
+  });
+}
+
+/* ── Helpers: airport detection + multi-stop maps URL ──────────── */
+function rideIsAirport(r: Ride): boolean {
+  if (r.flight_number || r.flight_airline || r.flight_airport) return true;
+  const blob = `${r.pickup_address ?? ""} ${r.dropoff_address ?? ""}`.toLowerCase();
+  // Common LA airport hints — picks up "LAX", "Burbank Airport",
+  // "Long Beach Airport", "Hollywood Burbank", "Van Nuys", and the
+  // generic "airport" / "terminal" tokens.
+  return /\b(lax|bur|lgb|sna|ont|van nuys|airport|terminal)\b/.test(blob);
+}
+
+// Google Maps multi-stop directions: origin = first pickup,
+// destination = last pickup, waypoints = everything in between (by time).
+// Driver gets one tap to see the day's run as a single route.
+function multiStopMapsUrl(rides: Ride[]): string {
+  const stops = rides
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(a.pickup_at).getTime() - new Date(b.pickup_at).getTime(),
+    )
+    .map((r) => r.pickup_address)
+    .filter((a): a is string => !!a && a.trim().length > 0);
+  if (stops.length === 0) return "https://www.google.com/maps";
+  const origin = stops[0];
+  const destination = stops[stops.length - 1];
+  const waypoints = stops.slice(1, -1);
+  const params = new URLSearchParams({
+    api: "1",
+    origin,
+    destination,
+    travelmode: "driving",
+  });
+  if (waypoints.length > 0) {
+    params.set("waypoints", waypoints.join("|"));
+  }
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
