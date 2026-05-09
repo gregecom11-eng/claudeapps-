@@ -7,6 +7,7 @@ import {
   listRideExtras,
   listRides,
   listVehicles,
+  reportRunningLate,
   updateMyProfile,
   updateRideStatus,
 } from "../lib/api";
@@ -78,6 +79,7 @@ export function Driver() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeRide, setActiveRide] = useState<Ride | null>(null);
+  const [activeIsPreview, setActiveIsPreview] = useState(false);
 
   useEffect(() => {
     if (!session) return;
@@ -140,6 +142,51 @@ export function Driver() {
 
   const groups = groupByBucket(today ?? []);
 
+  // Next unfinished ride (excluding cancelled/completed) — drives the
+  // "next pickup in X" banner. Also drives the day-briefing summary.
+  const dayBriefing = useMemo(() => {
+    const list = today ?? [];
+    const live = list.find(
+      (r) =>
+        r.status === "on_the_way" ||
+        r.status === "arrived" ||
+        r.status === "in_progress",
+    );
+    const upcoming = list
+      .filter(
+        (r) =>
+          r.status !== "cancelled" &&
+          r.status !== "completed" &&
+          new Date(r.pickup_at).getTime() >= Date.now(),
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.pickup_at).getTime() -
+          new Date(b.pickup_at).getTime(),
+      );
+    const next = live ?? upcoming[0] ?? null;
+    const remaining = list.filter(
+      (r) => r.status !== "cancelled" && r.status !== "completed",
+    );
+    const completedCount = list.filter(
+      (r) => r.status === "completed",
+    ).length;
+    const lastTime = list
+      .filter((r) => r.status !== "cancelled")
+      .sort(
+        (a, b) =>
+          new Date(b.pickup_at).getTime() -
+          new Date(a.pickup_at).getTime(),
+      )[0];
+    return {
+      next,
+      remainingCount: remaining.length,
+      completedCount,
+      totalCount: list.filter((r) => r.status !== "cancelled").length,
+      lastTime: lastTime?.pickup_at ?? null,
+    };
+  }, [today]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -181,6 +228,16 @@ export function Driver() {
         <div className="surface rounded-[12px] p-4 text-danger text-sm">
           {error}
         </div>
+      ) : null}
+
+      {today && today.length > 0 ? (
+        <DayBriefing
+          next={dayBriefing.next}
+          remainingCount={dayBriefing.remainingCount}
+          completedCount={dayBriefing.completedCount}
+          totalCount={dayBriefing.totalCount}
+          lastTime={dayBriefing.lastTime}
+        />
       ) : null}
 
       {today === null ? (
@@ -226,7 +283,10 @@ export function Driver() {
                         vehicle={
                           r.vehicle_id ? vehiclesById.get(r.vehicle_id) : null
                         }
-                        onTap={() => setActiveRide(r)}
+                        onTap={() => {
+                          setActiveRide(r);
+                          setActiveIsPreview(false);
+                        }}
                       />
                     </li>
                   ))}
@@ -261,7 +321,10 @@ export function Driver() {
               <li
                 key={r.id}
                 className="px-4 py-3 flex items-center gap-3 cursor-pointer"
-                onClick={() => setActiveRide(r)}
+                onClick={() => {
+                  setActiveRide(r);
+                  setActiveIsPreview(true);
+                }}
               >
                 <div className="tabular text-sm font-medium w-16">
                   {fmtTime(r.pickup_at)}
@@ -296,7 +359,11 @@ export function Driver() {
               ? vehiclesById.get(activeRide.vehicle_id) ?? null
               : null
           }
-          onClose={() => setActiveRide(null)}
+          preview={activeIsPreview}
+          onClose={() => {
+            setActiveRide(null);
+            setActiveIsPreview(false);
+          }}
           onChange={async (updates) => {
             // Status change
             if (updates.status) {
@@ -316,6 +383,161 @@ export function Driver() {
       ) : null}
     </div>
   );
+}
+
+/* ── Day briefing: next-pickup countdown + day shape ──────────── */
+function DayBriefing({
+  next,
+  remainingCount,
+  completedCount,
+  totalCount,
+  lastTime,
+}: {
+  next: Ride | null;
+  remainingCount: number;
+  completedCount: number;
+  totalCount: number;
+  lastTime: string | null;
+}) {
+  // Tick once a minute so the countdown stays fresh.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  if (totalCount === 0) return null;
+
+  // All rides done.
+  if (!next) {
+    return (
+      <div
+        className="rounded-[12px] p-4 flex items-center gap-3"
+        style={{
+          background:
+            "color-mix(in oklab, var(--success) 10%, var(--surface))",
+          border:
+            "1px solid color-mix(in oklab, var(--success) 35%, var(--border))",
+        }}
+      >
+        <span
+          className="inline-grid place-items-center"
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            color: "var(--success)",
+          }}
+        >
+          <Icon name="check" size={16} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div style={{ fontSize: 14, fontWeight: 600 }}>
+            All rides done — drive safe.
+          </div>
+          <div
+            className="text-muted"
+            style={{ fontSize: 12, lineHeight: 1.5 }}
+          >
+            {completedCount} completed today.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const live =
+    next.status === "on_the_way" ||
+    next.status === "arrived" ||
+    next.status === "in_progress";
+
+  const summary = lastTime
+    ? `${totalCount} ride${
+        totalCount === 1 ? "" : "s"
+      } · last pickup ${fmtTime(lastTime)}`
+    : `${totalCount} ride${totalCount === 1 ? "" : "s"} today`;
+
+  return (
+    <div
+      className="rounded-[12px] p-4 flex items-start gap-3"
+      style={{
+        background: live
+          ? "color-mix(in oklab, var(--accent) 10%, var(--surface))"
+          : "var(--surface)",
+        border: live
+          ? "1px solid color-mix(in oklab, var(--accent) 50%, var(--border))"
+          : "1px solid var(--border)",
+      }}
+    >
+      <span
+        className="inline-grid place-items-center"
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 10,
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          color: live ? "var(--accent)" : "var(--text-muted)",
+          flexShrink: 0,
+        }}
+      >
+        <Icon name={live ? "spark" : "clock"} size={16} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div style={{ fontSize: 14, fontWeight: 600 }}>
+          {live
+            ? `Live · ${liveStatusLabel(next.status)}`
+            : `Next pickup ${countdown(next.pickup_at)}`}
+        </div>
+        <div
+          className="text-muted truncate"
+          style={{ fontSize: 12.5, lineHeight: 1.5 }}
+        >
+          {fmtTime(next.pickup_at)} · {next.passenger_name} ·{" "}
+          {next.pickup_address}
+        </div>
+        <div
+          className="text-muted mt-1"
+          style={{ fontSize: 11.5, letterSpacing: "0.02em" }}
+        >
+          {completedCount > 0
+            ? `${completedCount}/${totalCount} done · ${remainingCount} to go · ${summary.split(" · ")[1] ?? ""}`
+            : summary}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function liveStatusLabel(s: RideStatus): string {
+  switch (s) {
+    case "on_the_way":
+      return "on the way";
+    case "arrived":
+      return "at pickup";
+    case "in_progress":
+      return "trip in progress";
+    default:
+      return s;
+  }
+}
+
+// "in 1h 12m" / "in 47m" / "in 3m" / "now" / "5m ago"
+function countdown(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  const mins = Math.round(ms / 60_000);
+  if (Math.abs(mins) < 1) return "now";
+  if (mins < 0) {
+    const m = -mins;
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m ago`;
+  }
+  if (mins < 60) return `in ${mins}m`;
+  const h = Math.floor(mins / 60);
+  return `in ${h}h ${mins % 60}m`;
 }
 
 function NotLinkedNotice({
@@ -433,12 +655,14 @@ function RideSheet({
   ride,
   driver,
   vehicle,
+  preview,
   onClose,
   onChange,
 }: {
   ride: Ride;
   driver: DriverType;
   vehicle: Vehicle | null;
+  preview?: boolean;
   onClose: () => void;
   onChange: (updates: { status?: RideStatus }) => void;
 }) {
@@ -595,6 +819,8 @@ function RideSheet({
               </a>
             ) : null}
 
+            {!preview ? <RunningLateButton ride={ride} /> : null}
+
             <SheetRow icon="pin" label="Pickup">
               {ride.pickup_address}
               <div className="mt-1.5">
@@ -669,20 +895,154 @@ function RideSheet({
           />
         )}
 
-        {/* Action bar */}
-        <div
-          className="px-5 py-4 space-y-2 sticky bottom-0"
+        {/* Action bar — hidden in preview mode (Tomorrow / Upcoming) */}
+        {preview ? (
+          <div
+            className="px-5 py-3 sticky bottom-0 text-center"
+            style={{
+              borderTop: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              fontSize: 12,
+              color: "var(--text-muted)",
+              lineHeight: 1.5,
+            }}
+          >
+            Preview · actions become available on the day of the ride.
+          </div>
+        ) : (
+          <div
+            className="px-5 py-4 space-y-2 sticky bottom-0"
+            style={{
+              borderTop: "1px solid var(--border)",
+              background: "var(--surface)",
+            }}
+          >
+            <ActionBar
+              status={ride.status}
+              onAdvance={(s) => onChange({ status: s })}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RunningLateButton({ ride }: { ride: Ride }) {
+  const [expanded, setExpanded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const send = async (mins: number) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await reportRunningLate(ride, mins);
+      setDone(mins);
+      setExpanded(false);
+      window.setTimeout(() => setDone(null), 4000);
+    } catch (e) {
+      setErr(
+        e instanceof Error
+          ? e.message
+          : "Couldn't send — try Message dispatch instead.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (done !== null) {
+    return (
+      <div
+        className="rounded-[10px] px-3 py-2.5 text-center"
+        style={{
+          background:
+            "color-mix(in oklab, var(--success) 14%, var(--surface))",
+          border:
+            "1px solid color-mix(in oklab, var(--success) 40%, var(--border))",
+          color: "var(--success)",
+          fontSize: 13,
+        }}
+      >
+        <Icon name="check" size={13} /> Dispatch notified · ~{done} min late
+      </div>
+    );
+  }
+
+  if (!expanded) {
+    return (
+      <>
+        <button
+          onClick={() => setExpanded(true)}
+          className="w-full inline-flex items-center justify-center gap-2 rounded-[10px] h-11 text-[14px] font-medium"
           style={{
-            borderTop: "1px solid var(--border)",
-            background: "var(--surface)",
+            background:
+              "color-mix(in oklab, var(--warn) 12%, var(--surface))",
+            color: "var(--warn)",
+            border:
+              "1px solid color-mix(in oklab, var(--warn) 40%, var(--border))",
           }}
         >
-          <ActionBar
-            status={ride.status}
-            onAdvance={(s) => onChange({ status: s })}
-          />
-        </div>
+          <Icon name="clock" size={14} /> Running late
+        </button>
+        {err ? (
+          <div
+            className="text-danger"
+            style={{ fontSize: 11.5, textAlign: "center" }}
+          >
+            {err}
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  return (
+    <div
+      className="rounded-[10px] p-2.5"
+      style={{
+        background: "var(--surface-2)",
+        border: "1px solid var(--border)",
+      }}
+    >
+      <div
+        className="text-muted mb-2 px-1"
+        style={{ fontSize: 12, lineHeight: 1.4 }}
+      >
+        Pings dispatch right now with your ETA delay.
       </div>
+      <div className="grid grid-cols-3 gap-2">
+        {[10, 20, 30].map((m) => (
+          <button
+            key={m}
+            onClick={() => send(m)}
+            disabled={busy}
+            className="inline-flex items-center justify-center h-10 rounded-[8px] text-[13px] font-semibold"
+            style={{
+              background:
+                "color-mix(in oklab, var(--warn) 16%, var(--surface))",
+              color: "var(--warn)",
+              border:
+                "1px solid color-mix(in oklab, var(--warn) 45%, var(--border))",
+            }}
+          >
+            {busy ? "…" : `+${m} min`}
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={() => setExpanded(false)}
+        className="w-full mt-2 inline-flex items-center justify-center h-8 rounded-[8px] text-[12.5px]"
+        style={{
+          background: "transparent",
+          color: "var(--text-muted)",
+          border: "1px solid var(--border)",
+        }}
+      >
+        Cancel
+      </button>
     </div>
   );
 }
@@ -1161,26 +1521,32 @@ function groupByBucket(rides: Ride[]) {
 /* ── Past + Profile sub-routes ─────────────────────────────────── */
 
 export function DriverPast() {
-  const [rides, setRides] = useState<Ride[]>([]);
+  const [rides, setRides] = useState<Ride[] | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"all" | "completed" | "cancelled">(
+    "all",
+  );
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
-    Promise.all([listRides({ limit: 100 }), listVehicles()])
+    // Server-side filter: pickup_at < now (last 12 months window). RLS
+    // already scopes to the current driver, so this is just their past.
+    const oneYearAgo = new Date(
+      Date.now() - 365 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const now = new Date().toISOString();
+    Promise.all([
+      listRides({ from: oneYearAgo, to: now, limit: 500 }),
+      listVehicles(),
+    ])
       .then(([r, v]) => {
-        const past = r
-          .filter(
-            (x) =>
-              new Date(x.pickup_at).getTime() < Date.now() ||
-              x.status === "completed" ||
-              x.status === "cancelled",
-          )
-          .sort(
-            (a, b) =>
-              new Date(b.pickup_at).getTime() -
-              new Date(a.pickup_at).getTime(),
-          );
-        setRides(past);
+        const sorted = r.sort(
+          (a, b) =>
+            new Date(b.pickup_at).getTime() -
+            new Date(a.pickup_at).getTime(),
+        );
+        setRides(sorted);
         setVehicles(v);
       })
       .catch((e) =>
@@ -1193,8 +1559,72 @@ export function DriverPast() {
     [vehicles],
   );
 
+  // Apply user filters.
+  const filtered = useMemo(() => {
+    if (!rides) return null;
+    const q = query.trim().toLowerCase();
+    return rides.filter((r) => {
+      if (filter === "completed" && r.status !== "completed") return false;
+      if (filter === "cancelled" && r.status !== "cancelled") return false;
+      if (q) {
+        const v = r.vehicle_id ? vMap.get(r.vehicle_id) : null;
+        const hay = [
+          r.passenger_name,
+          r.pickup_address,
+          r.dropoff_address ?? "",
+          v?.display_name ?? "",
+          v?.plate ?? "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [rides, filter, query, vMap]);
+
+  // Stats: this week + this month (completed only).
+  const stats = useMemo(() => {
+    if (!rides) return null;
+    const now = Date.now();
+    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
+    let weekCount = 0;
+    let weekFare = 0;
+    let weekTip = 0;
+    let monthCount = 0;
+    let monthFare = 0;
+    let monthTip = 0;
+    for (const r of rides) {
+      if (r.status !== "completed") continue;
+      const t = new Date(r.pickup_at).getTime();
+      if (t >= weekAgo) {
+        weekCount++;
+        weekFare += r.fare_cents;
+        weekTip += r.gratuity_cents;
+      }
+      if (t >= monthAgo) {
+        monthCount++;
+        monthFare += r.fare_cents;
+        monthTip += r.gratuity_cents;
+      }
+    }
+    return { weekCount, weekFare, weekTip, monthCount, monthFare, monthTip };
+  }, [rides]);
+
+  // Group by week label.
+  const grouped = useMemo(() => {
+    if (!filtered) return null;
+    const map = new Map<string, Ride[]>();
+    for (const r of filtered) {
+      const k = weekLabelFor(r.pickup_at);
+      map.set(k, [...(map.get(k) ?? []), r]);
+    }
+    return Array.from(map.entries());
+  }, [filtered]);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="flex items-center gap-3">
         <Link
           to="/"
@@ -1209,40 +1639,213 @@ export function DriverPast() {
       >
         Past rides
       </h1>
+
+      {/* Stats header */}
+      {stats ? (
+        <div className="grid grid-cols-2 gap-3">
+          <StatTile
+            label="This week"
+            count={stats.weekCount}
+            fare={stats.weekFare}
+            tip={stats.weekTip}
+          />
+          <StatTile
+            label="Last 30 days"
+            count={stats.monthCount}
+            fare={stats.monthFare}
+            tip={stats.monthTip}
+          />
+        </div>
+      ) : null}
+
+      {/* Search + filter pills */}
+      <div className="space-y-2">
+        <div className="relative">
+          <span
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"
+            style={{ pointerEvents: "none" }}
+          >
+            <Icon name="search" size={14} />
+          </span>
+          <input
+            className="field field-prefixed"
+            placeholder="Search passenger, address, or vehicle"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <div className="flex gap-2">
+          {(["all", "completed", "cancelled"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className="inline-flex items-center h-8 px-3 rounded-[8px] text-[12.5px] font-medium"
+              style={{
+                background:
+                  filter === f
+                    ? "color-mix(in oklab, var(--accent) 16%, transparent)"
+                    : "transparent",
+                color:
+                  filter === f ? "var(--accent)" : "var(--text-muted)",
+                border: `1px solid ${
+                  filter === f
+                    ? "color-mix(in oklab, var(--accent) 50%, var(--border))"
+                    : "var(--border)"
+                }`,
+                textTransform: "capitalize",
+              }}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {error ? (
         <div className="text-danger text-sm">{error}</div>
       ) : null}
-      {rides.length === 0 ? (
-        <div className="text-muted text-sm">Nothing yet.</div>
+
+      {grouped === null ? (
+        <div className="text-muted text-sm">Loading…</div>
+      ) : grouped.length === 0 ? (
+        <div
+          className="rounded-[12px] p-6 text-center text-muted text-sm"
+          style={{
+            background: "var(--surface-2)",
+            border: "1px dashed var(--border)",
+          }}
+        >
+          {query || filter !== "all"
+            ? "No matches."
+            : "No past rides yet."}
+        </div>
       ) : (
-        <ul className="surface rounded-[12px] divide-y divide-border">
-          {rides.map((r) => {
-            const v = r.vehicle_id ? vMap.get(r.vehicle_id) : null;
-            return (
-              <li key={r.id} className="px-4 py-3 flex items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <div
-                    className="truncate"
-                    style={{ fontSize: 14, fontWeight: 600 }}
-                  >
-                    {r.passenger_name}
-                  </div>
-                  <div
-                    className="text-muted truncate tabular"
-                    style={{ fontSize: 12 }}
-                  >
-                    {fmtDate(r.pickup_at)} · {fmtTime(r.pickup_at)}
-                    {v ? ` · ${v.display_name}` : ""}
-                  </div>
-                </div>
-                <StatusBadge status={r.status} />
-              </li>
-            );
-          })}
-        </ul>
+        <div className="space-y-5">
+          {grouped.map(([label, items]) => (
+            <section key={label}>
+              <div className="flex items-center gap-3 mb-2">
+                <h2
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  {label}
+                </h2>
+                <span className="text-muted tnum" style={{ fontSize: 11.5 }}>
+                  {items.length} {items.length === 1 ? "ride" : "rides"}
+                </span>
+                <div
+                  className="flex-1 h-px"
+                  style={{ background: "var(--border)" }}
+                />
+              </div>
+              <ul className="surface rounded-[12px] divide-y divide-border">
+                {items.map((r) => {
+                  const v = r.vehicle_id ? vMap.get(r.vehicle_id) : null;
+                  return (
+                    <li
+                      key={r.id}
+                      className="px-4 py-3 flex items-center gap-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div
+                          className="truncate"
+                          style={{ fontSize: 14, fontWeight: 600 }}
+                        >
+                          {r.passenger_name}
+                        </div>
+                        <div
+                          className="text-muted truncate tabular"
+                          style={{ fontSize: 12 }}
+                        >
+                          {fmtDate(r.pickup_at)} · {fmtTime(r.pickup_at)}
+                          {v ? ` · ${v.display_name}` : ""}
+                        </div>
+                      </div>
+                      <StatusBadge status={r.status} />
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
+        </div>
       )}
     </div>
   );
+}
+
+function StatTile({
+  label,
+  count,
+  fare,
+  tip,
+}: {
+  label: string;
+  count: number;
+  fare: number;
+  tip: number;
+}) {
+  return (
+    <div
+      className="surface rounded-[12px] p-4"
+      style={{ minHeight: 96 }}
+    >
+      <div
+        className="text-muted"
+        style={{
+          fontSize: 11,
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+          fontWeight: 500,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        className="tnum mt-1.5"
+        style={{
+          fontSize: 22,
+          fontWeight: 600,
+          letterSpacing: "-0.02em",
+        }}
+      >
+        {count} <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-muted)" }}>{count === 1 ? "ride" : "rides"}</span>
+      </div>
+      <div
+        className="text-muted mt-1 tnum"
+        style={{ fontSize: 11.5, lineHeight: 1.5 }}
+      >
+        {fmtMoney(fare)} fares · {fmtMoney(tip)} tips
+      </div>
+    </div>
+  );
+}
+
+// "This week" / "Last week" / "Apr 22 – 28" / "March 2026"
+function weekLabelFor(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const ms = now.getTime() - d.getTime();
+  const days = ms / (1000 * 60 * 60 * 24);
+  if (days < 0) return "Upcoming";
+  if (days < 7) return "This week";
+  if (days < 14) return "Last week";
+  if (days < 60) {
+    return d.toLocaleDateString("en-US", {
+      timeZone: BUSINESS_TZ,
+      month: "long",
+    });
+  }
+  return d.toLocaleDateString("en-US", {
+    timeZone: BUSINESS_TZ,
+    month: "long",
+    year: "numeric",
+  });
 }
 
 export function DriverProfile() {

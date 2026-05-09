@@ -400,6 +400,38 @@ export async function sendTestNotification(): Promise<{
   };
 }
 
+// Driver-initiated alerts. Right now: "I'm running late."
+// Inserts directly into notification_events targeting owners; the
+// dispatcher delivers it on the next tick. Falls back gracefully if
+// the notifications schema hasn't been applied yet.
+export async function reportRunningLate(
+  ride: { id: string; passenger_name: string; pickup_at: string },
+  minutes: number,
+): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const driverName = user?.email ?? "driver";
+  const fmtT = new Date(ride.pickup_at).toLocaleTimeString("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const { error } = await supabase.rpc("enqueue_notification", {
+    p_kind: "ride_status_changed",
+    p_ride_id: ride.id,
+    p_recipients: [{ role: "owner" }],
+    p_payload: {
+      title: `Driver running ~${minutes} min late · ${ride.passenger_name}`,
+      body: `Pickup ${fmtT} · reported by ${driverName}`,
+      url: `/rides/${ride.id}`,
+      tag: `late-${ride.id}`,
+      urgency: "high",
+    },
+  });
+  if (error) throw error;
+}
+
 // ── Notification inbox / activity log ──────────────────────────────
 export async function listNotificationInbox(opts?: {
   limit?: number;
