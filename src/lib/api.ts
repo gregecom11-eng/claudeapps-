@@ -264,6 +264,52 @@ export async function generateInviteLink(
   return { email: body.email ?? email, action_link: body.action_link };
 }
 
+// Generate a fresh VAPID keypair on the server (one-time, owner-only).
+// The keys are NOT stored — the operator pastes them into Cloudflare
+// secrets. Reloading this generates fresh keys and breaks any existing
+// subscriptions, so call once and save the result.
+export async function generateVapidKeys(): Promise<{
+  publicKey: string;
+  privateKey: string;
+  subject: string;
+}> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session) throw new Error("Not signed in");
+  const res = await fetch("/api/push/vapid-setup", {
+    headers: { authorization: `Bearer ${session.access_token}` },
+  });
+  const body = (await res.json()) as {
+    ok?: boolean;
+    secrets?: {
+      VAPID_PUBLIC_KEY: string;
+      VAPID_PRIVATE_KEY: string;
+      VAPID_SUBJECT: string;
+    };
+    error?: string;
+  };
+  if (!res.ok || !body.secrets) {
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return {
+    publicKey: body.secrets.VAPID_PUBLIC_KEY,
+    privateKey: body.secrets.VAPID_PRIVATE_KEY,
+    subject: body.secrets.VAPID_SUBJECT,
+  };
+}
+
+// Probe whether VAPID is currently configured on the worker. Returns
+// true if /api/push/vapid-public returns a key, false otherwise.
+export async function isVapidConfigured(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/push/vapid-public");
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // ── Profile (current user) ─────────────────────────────────────────
 export async function updateMyProfile(patch: {
   full_name?: string | null;
