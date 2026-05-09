@@ -29,9 +29,23 @@ const STATUS_COLOR: Record<NotificationStatus, string> = {
 
 export function NotificationInbox() {
   const [rows, setRows] = useState<NotificationInboxRow[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | NotificationStatus>("all");
 
-  const reload = () => listNotificationInbox({ limit: 100 }).then(setRows);
+  const reload = () =>
+    listNotificationInbox({ limit: 100 })
+      .then((r) => {
+        setRows(r);
+        setLoadError(null);
+      })
+      .catch((e) => {
+        setLoadError(
+          e instanceof Error
+            ? e.message
+            : "Notification inbox isn't available yet.",
+        );
+        setRows([]);
+      });
 
   useEffect(() => {
     reload();
@@ -90,7 +104,13 @@ export function NotificationInbox() {
         </button>
       </div>
 
-      {filtered === null ? (
+      {loadError ? (
+        <div className="p-5 text-muted text-sm">
+          The notifications inbox isn't ready yet — run{" "}
+          <code style={{ fontSize: 12 }}>supabase/08_notifications.sql</code>{" "}
+          in your Supabase SQL editor to enable it.
+        </div>
+      ) : filtered === null ? (
         <div className="p-5 text-muted text-sm">Loading…</div>
       ) : filtered.length === 0 ? (
         <div className="p-5 text-muted text-sm">
