@@ -5,6 +5,7 @@ import {
   claimDriverByEmail,
   getOrgSettings,
   listRideExtras,
+  listRideStatusTimestamps,
   listRides,
   listVehicles,
   reportRunningLate,
@@ -360,8 +361,13 @@ export function Driver() {
               : null
           }
           preview={activeIsPreview}
+          nextRide={pickNextRide(today ?? [], activeRide)}
           onClose={() => {
             setActiveRide(null);
+            setActiveIsPreview(false);
+          }}
+          onJumpToRide={(r) => {
+            setActiveRide(r);
             setActiveIsPreview(false);
           }}
           onChange={async (updates) => {
@@ -656,20 +662,27 @@ function RideSheet({
   driver,
   vehicle,
   preview,
+  nextRide,
   onClose,
   onChange,
+  onJumpToRide,
 }: {
   ride: Ride;
   driver: DriverType;
   vehicle: Vehicle | null;
   preview?: boolean;
+  nextRide?: Ride | null;
   onClose: () => void;
   onChange: (updates: { status?: RideStatus }) => void;
+  onJumpToRide?: (r: Ride) => void;
 }) {
   const [tab, setTab] = useState<SheetTab>("briefing");
   const [extras, setExtras] = useState<RideExtra[]>([]);
   const [extrasErr, setExtrasErr] = useState<string | null>(null);
   const [dispatchPhone, setDispatchPhone] = useState<string | null>(null);
+  const [stepTimestamps, setStepTimestamps] = useState<
+    Partial<Record<RideStatus, string>>
+  >({});
 
   useEffect(() => {
     getOrgSettings()
@@ -684,6 +697,13 @@ function RideSheet({
         setExtrasErr(e instanceof Error ? e.message : "Failed to load extras"),
       );
   }, [ride.id]);
+
+  // Re-fetch status timestamps whenever the ride's status changes.
+  useEffect(() => {
+    listRideStatusTimestamps(ride.id)
+      .then(setStepTimestamps)
+      .catch(() => setStepTimestamps({}));
+  }, [ride.id, ride.status]);
 
   const reloadExtras = () =>
     listRideExtras(ride.id).then(setExtras).catch(() => {});
@@ -749,7 +769,7 @@ function RideSheet({
         </div>
 
         {/* Status progress strip */}
-        <ProgressStrip status={ride.status} />
+        <ProgressStrip status={ride.status} stepTimestamps={stepTimestamps} />
 
         {/* Tabs */}
         <div
@@ -920,6 +940,8 @@ function RideSheet({
             <ActionBar
               status={ride.status}
               onAdvance={(s) => onChange({ status: s })}
+              nextRide={nextRide}
+              onJumpToRide={onJumpToRide}
             />
           </div>
         )}
@@ -1047,7 +1069,13 @@ function RunningLateButton({ ride }: { ride: Ride }) {
   );
 }
 
-function ProgressStrip({ status }: { status: RideStatus }) {
+function ProgressStrip({
+  status,
+  stepTimestamps,
+}: {
+  status: RideStatus;
+  stepTimestamps?: Partial<Record<RideStatus, string>>;
+}) {
   const STEPS: { key: RideStatus; label: string }[] = [
     { key: "scheduled", label: "Booked" },
     { key: "on_the_way", label: "On the way" },
@@ -1074,8 +1102,8 @@ function ProgressStrip({ status }: { status: RideStatus }) {
                 background: done
                   ? "var(--success)"
                   : active
-                  ? "var(--accent)"
-                  : "var(--border)",
+                    ? "var(--accent)"
+                    : "var(--border)",
                 transition: "background 200ms",
               }}
               title={s.label}
@@ -1084,15 +1112,64 @@ function ProgressStrip({ status }: { status: RideStatus }) {
         })}
       </div>
       <div
-        className="mt-2 text-muted"
-        style={{ fontSize: 11.5, letterSpacing: "0.02em" }}
+        className="mt-2 grid"
+        style={{
+          gridTemplateColumns: `repeat(${STEPS.length}, 1fr)`,
+          gap: 6,
+        }}
       >
-        {status === "cancelled"
-          ? "Ride cancelled"
-          : currentIdx >= 0
-          ? STEPS[currentIdx].label
-          : "Pending"}
+        {STEPS.map((s, i) => {
+          const done = idx > i;
+          const active = idx === i;
+          const ts = stepTimestamps?.[s.key];
+          return (
+            <div
+              key={s.key}
+              className="text-center tabular"
+              style={{
+                fontSize: 9.5,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                color: active
+                  ? "var(--accent)"
+                  : done
+                    ? "var(--success)"
+                    : "var(--text-muted)",
+                fontWeight: active ? 600 : 500,
+                lineHeight: 1.3,
+              }}
+            >
+              <div>{s.label}</div>
+              {ts ? (
+                <div
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 500,
+                    textTransform: "none",
+                    letterSpacing: 0,
+                    marginTop: 1,
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  {fmtTime(ts)}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
+      {status === "cancelled" ? (
+        <div
+          className="mt-2 text-center"
+          style={{
+            fontSize: 11.5,
+            color: "var(--danger)",
+            fontWeight: 500,
+          }}
+        >
+          Ride cancelled
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1100,33 +1177,64 @@ function ProgressStrip({ status }: { status: RideStatus }) {
 function ActionBar({
   status,
   onAdvance,
+  nextRide,
+  onJumpToRide,
 }: {
   status: RideStatus;
   onAdvance: (s: RideStatus) => void;
+  nextRide?: Ride | null;
+  onJumpToRide?: (r: Ride) => void;
 }) {
   const next = nextStatus(status);
   if (!next) {
     return (
-      <div
-        className="rounded-[10px] px-3 py-3 text-center text-sm"
-        style={{
-          background: "var(--surface-2)",
-          border: "1px solid var(--border)",
-        }}
-      >
-        <Icon name="check" size={18} className="text-accent inline-block" />
-        <div className="mt-1" style={{ fontWeight: 600 }}>
-          Ride {status}
+      <div className="space-y-2">
+        <div
+          className="rounded-[10px] px-3 py-3 text-center text-sm"
+          style={{
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+          }}
+        >
+          <Icon
+            name="check"
+            size={18}
+            className="text-accent inline-block"
+          />
+          <div className="mt-1" style={{ fontWeight: 600 }}>
+            Ride {status}
+          </div>
         </div>
+        {nextRide && onJumpToRide ? (
+          <button
+            onClick={() => onJumpToRide(nextRide)}
+            className="w-full inline-flex items-center justify-between gap-2 rounded-[10px] h-12 px-4 text-[14px] font-semibold"
+            style={{
+              background: "var(--accent)",
+              color: "#15161B",
+              border: "1px solid var(--accent-strong)",
+            }}
+          >
+            <span className="text-left min-w-0 truncate">
+              <span style={{ opacity: 0.7, fontWeight: 500, fontSize: 11.5 }}>
+                NEXT
+              </span>
+              <span className="block truncate">
+                {fmtTime(nextRide.pickup_at)} · {nextRide.passenger_name}
+              </span>
+            </span>
+            <Icon name="arrow" size={16} />
+          </button>
+        ) : null}
       </div>
     );
   }
   const labels: Record<RideStatus, string> = {
     requested: "",
     scheduled: "On my way",
-    on_the_way: "Arrived at pickup",
-    arrived: "Start trip — passenger on board",
-    in_progress: "Mark completed",
+    on_the_way: "I'm here",
+    arrived: "Passenger on board",
+    in_progress: "Trip complete",
     completed: "",
     cancelled: "",
   };
@@ -1500,6 +1608,26 @@ function SheetRow({
 function firstName(s: string | null | undefined): string {
   if (!s) return "";
   return s.split(/\s+/)[0].replace(/[(),]/g, "");
+}
+
+// The next ride after the current one (chronologically), excluding
+// completed/cancelled and the ride itself. Used to power the "Next →"
+// handoff at the bottom of a completed ride sheet.
+function pickNextRide(rides: Ride[], current: Ride): Ride | null {
+  const upcoming = rides
+    .filter(
+      (r) =>
+        r.id !== current.id &&
+        r.status !== "completed" &&
+        r.status !== "cancelled" &&
+        new Date(r.pickup_at).getTime() >=
+          new Date(current.pickup_at).getTime(),
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.pickup_at).getTime() - new Date(b.pickup_at).getTime(),
+    );
+  return upcoming[0] ?? null;
 }
 
 function groupByBucket(rides: Ride[]) {

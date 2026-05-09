@@ -400,6 +400,32 @@ export async function sendTestNotification(): Promise<{
   };
 }
 
+// Status-change timestamps for a single ride, derived from the events
+// table (which our schema-level trigger already populates on every
+// status flip). Returns the most recent timestamp per status.
+export async function listRideStatusTimestamps(
+  rideId: string,
+): Promise<Partial<Record<import("./types").RideStatus, string>>> {
+  const { data, error } = await supabase
+    .from("events")
+    .select("metadata, created_at")
+    .eq("ride_id", rideId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  const out: Partial<Record<import("./types").RideStatus, string>> = {};
+  for (const ev of (data ?? []) as {
+    metadata: { to?: string; status?: string } | null;
+    created_at: string;
+  }[]) {
+    const meta = ev.metadata ?? {};
+    const to = (meta.to ?? meta.status) as
+      | import("./types").RideStatus
+      | undefined;
+    if (to && !out[to]) out[to] = ev.created_at;
+  }
+  return out;
+}
+
 // Driver-initiated alerts. Right now: "I'm running late."
 // Inserts directly into notification_events targeting owners; the
 // dispatcher delivers it on the next tick. Falls back gracefully if
