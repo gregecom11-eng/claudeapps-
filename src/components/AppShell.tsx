@@ -12,7 +12,7 @@ const TABS: { to: string; end?: boolean; label: string; icon: IconName }[] = [
   { to: "/calendar", label: "Calendar", icon: "calendar" },
   { to: "/clients", label: "Clients", icon: "clients" },
   { to: "/drivers", label: "Drivers", icon: "drivers" },
-  { to: "/invoices", label: "Invoices", icon: "invoice" },
+  { to: "/earnings", label: "Earnings", icon: "wallet" },
   { to: "/settings", label: "Settings", icon: "settings" },
 ];
 
