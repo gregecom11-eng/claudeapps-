@@ -3,7 +3,9 @@ import {
   deleteClient,
   exportSnapshot,
   generateInviteLink,
+  generateVapidKeys,
   getOrgSettings,
+  isVapidConfigured,
   listAllDrivers,
   listAllVehicles,
   listClients,
@@ -71,6 +73,7 @@ export function Settings() {
 
       <AccountSection flash={flash} />
       <OrgSection flash={flash} />
+      <PushSetupSection flash={flash} />
       <DriversSection flash={flash} />
       <VehiclesSection flash={flash} />
       <ClientsSection flash={flash} />
@@ -323,6 +326,255 @@ function OrgSection({ flash }: { flash: (m: string) => void }) {
         </PrimaryBtn>
       </div>
     </Section>
+  );
+}
+
+/* ── Push notifications setup (one-time VAPID key generation) ────── */
+function PushSetupSection({ flash }: { flash: (m: string) => void }) {
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [keys, setKeys] = useState<{
+    publicKey: string;
+    privateKey: string;
+    subject: string;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    isVapidConfigured().then(setConfigured).catch(() => setConfigured(false));
+  }, []);
+
+  const onGenerate = async () => {
+    setBusy(true);
+    try {
+      const k = await generateVapidKeys();
+      setKeys(k);
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Generation failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section
+      eyebrow="01c — Push notifications"
+      title="Driver + booking alerts"
+      subtitle="Drivers get pinged 90 min before each pickup; you get pinged when a /book request lands. Free, but requires a one-time setup."
+    >
+      <div className="p-5 space-y-4">
+        {configured === null ? (
+          <div className="text-muted text-sm">Checking…</div>
+        ) : configured ? (
+          <div
+            className="flex items-center gap-2 text-sm"
+            style={{ color: "var(--success)" }}
+          >
+            <Icon name="check" size={14} /> Push is configured on the
+            server. Toggle the "Push notifications" card on this page to
+            subscribe this device.
+          </div>
+        ) : (
+          <>
+            <p
+              className="text-muted"
+              style={{ fontSize: 13.5, lineHeight: 1.55 }}
+            >
+              Push notifications aren't set up yet. Click the button below
+              to generate a one-time keypair. You'll see three values to
+              paste as Cloudflare secrets, then push works for everyone.
+            </p>
+            <PrimaryBtn onClick={onGenerate} disabled={busy}>
+              {busy ? "Generating…" : "Generate VAPID keys"}
+            </PrimaryBtn>
+            <p
+              className="text-muted"
+              style={{ fontSize: 11.5, lineHeight: 1.5 }}
+            >
+              The keys are shown once and not stored. If you reload the
+              page after generating them you'll lose them and have to
+              re-generate; any device already subscribed will need to
+              resubscribe.
+            </p>
+          </>
+        )}
+      </div>
+
+      {keys ? (
+        <VapidKeysModal keys={keys} onClose={() => setKeys(null)} />
+      ) : null}
+    </Section>
+  );
+}
+
+function VapidKeysModal({
+  keys,
+  onClose,
+}: {
+  keys: { publicKey: string; privateKey: string; subject: string };
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const copy = async (label: string, value: string) => {
+    try {
+      await navigator.clipboard?.writeText(value);
+      setCopied(label);
+      setTimeout(() => setCopied(null), 1600);
+    } catch {
+      /* ignore */
+    }
+  };
+  const rows: { name: string; value: string; description: string }[] = [
+    {
+      name: "VAPID_PUBLIC_KEY",
+      value: keys.publicKey,
+      description: "Server tells the browser this is its identity.",
+    },
+    {
+      name: "VAPID_PRIVATE_KEY",
+      value: keys.privateKey,
+      description: "Server-only. Treat this like a password.",
+    },
+    {
+      name: "VAPID_SUBJECT",
+      value: keys.subject,
+      description:
+        "Your contact email so push services can reach you about delivery issues. Edit before pasting if not yours.",
+    },
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-end md:items-center justify-center"
+      style={{ background: "color-mix(in oklab, #000 50%, transparent)" }}
+      onClick={onClose}
+    >
+      <div
+        className="surface rounded-t-[16px] md:rounded-[16px] w-full md:max-w-[640px] max-h-[92vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          paddingBottom: "max(env(safe-area-inset-bottom), 16px)",
+        }}
+      >
+        <div
+          className="px-5 pt-5 pb-3"
+          style={{ borderBottom: "1px solid var(--border)" }}
+        >
+          <h2
+            style={{
+              fontSize: 18,
+              fontWeight: 600,
+              letterSpacing: "-0.01em",
+            }}
+          >
+            One-time setup: paste these into Cloudflare
+          </h2>
+          <p
+            className="text-muted mt-1"
+            style={{ fontSize: 12.5, lineHeight: 1.5 }}
+          >
+            Open <strong>Cloudflare → Workers &amp; Pages → claudeapps-1
+            → Settings → Variables and Secrets</strong>. For each row
+            below, click <em>Add</em>, choose <strong>type: Secret</strong>,
+            paste the name and value, save. After all three are saved
+            Cloudflare auto-redeploys with push enabled.
+          </p>
+        </div>
+        <div className="p-5 space-y-4">
+          {rows.map((r) => (
+            <div key={r.name}>
+              <div className="flex items-center justify-between mb-1">
+                <code
+                  className="mono"
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    background: "var(--surface-2)",
+                    padding: "2px 8px",
+                    borderRadius: 6,
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  {r.name}
+                </code>
+                <button
+                  onClick={() => copy(r.name, r.value)}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[8px] text-[12px] font-medium"
+                  style={{
+                    background:
+                      copied === r.name
+                        ? "color-mix(in oklab, var(--success) 14%, transparent)"
+                        : "transparent",
+                    color:
+                      copied === r.name ? "var(--success)" : "var(--text)",
+                    border: `1px solid ${
+                      copied === r.name
+                        ? "color-mix(in oklab, var(--success) 40%, var(--border))"
+                        : "var(--border)"
+                    }`,
+                  }}
+                >
+                  <Icon
+                    name={copied === r.name ? "check" : "copy"}
+                    size={12}
+                  />
+                  {copied === r.name ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <div
+                className="rounded-[8px] px-3 py-2 mono"
+                style={{
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--border)",
+                  fontSize: 11.5,
+                  wordBreak: "break-all",
+                  maxHeight: 100,
+                  overflowY: "auto",
+                }}
+              >
+                {r.value}
+              </div>
+              <div
+                className="text-muted mt-1"
+                style={{ fontSize: 11.5 }}
+              >
+                {r.description}
+              </div>
+            </div>
+          ))}
+          <div
+            className="rounded-[10px] px-4 py-3"
+            style={{
+              background:
+                "color-mix(in oklab, var(--warn) 12%, var(--surface))",
+              border:
+                "1px solid color-mix(in oklab, var(--warn) 35%, var(--border))",
+              fontSize: 12.5,
+              lineHeight: 1.55,
+            }}
+          >
+            <strong>Don't close this until you've pasted all three.</strong>{" "}
+            We don't store these on the server — closing means
+            re-generating, which invalidates any device already subscribed.
+          </div>
+        </div>
+        <div
+          className="flex items-center justify-end gap-2 px-5 py-3"
+          style={{ borderTop: "1px solid var(--border)" }}
+        >
+          <button
+            onClick={onClose}
+            className="inline-flex items-center justify-center h-10 px-4 rounded-[8px] text-[14px] font-medium"
+            style={{
+              background: "transparent",
+              color: "var(--text)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            I've pasted all three
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
