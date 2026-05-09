@@ -9,8 +9,8 @@ import { Calendar } from "./routes/Calendar";
 import { Client } from "./routes/Client";
 import { Clients } from "./routes/Clients";
 import { Drivers } from "./routes/Drivers";
+import { Earnings } from "./routes/Earnings";
 import { Install } from "./routes/Install";
-import { Invoices } from "./routes/Invoices";
 import { Login } from "./routes/Login";
 import { Dashboard } from "./routes/Dashboard";
 import { Driver, DriverPast, DriverProfile } from "./routes/Driver";
@@ -98,7 +98,8 @@ function Gate() {
         <Route path="calendar" element={<Calendar />} />
         <Route path="clients" element={<Clients />} />
         <Route path="drivers" element={<Drivers />} />
-        <Route path="invoices" element={<Invoices />} />
+        <Route path="earnings" element={<Earnings />} />
+        <Route path="invoices" element={<Navigate to="/earnings" replace />} />
         <Route path="settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

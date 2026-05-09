@@ -20,6 +20,8 @@ import {
 import { useAuth } from "../lib/auth";
 import { Avatar } from "../components/Avatar";
 import { Icon, type IconName } from "../components/Icon";
+import { NotificationInbox } from "../components/NotificationInbox";
+import { NotificationPrefs } from "../components/NotificationPrefs";
 import { PushToggle } from "../components/PushToggle";
 import type {
   BillingTerms,
@@ -74,6 +76,7 @@ export function Settings() {
       <AccountSection flash={flash} />
       <OrgSection flash={flash} />
       <PushSetupSection flash={flash} />
+      <NotificationsSection flash={flash} />
       <DriversSection flash={flash} />
       <VehiclesSection flash={flash} />
       <ClientsSection flash={flash} />
@@ -575,6 +578,63 @@ function VapidKeysModal({
         </div>
       </div>
     </div>
+  );
+}
+
+/* ── Notifications (per-user prefs + owner inbox) ─────────────────── */
+function NotificationsSection({ flash }: { flash: (m: string) => void }) {
+  const { profile } = useAuth();
+  const role = profile?.role ?? "owner";
+  const isOwner = role === "owner";
+  return (
+    <Section
+      eyebrow="01d — Notifications"
+      title="What pings you, and when"
+      subtitle="Per-event toggles and quiet hours. Cancellations and new bookings always come through, even during quiet hours."
+    >
+      <NotificationPrefs role={role} flash={flash} />
+      {isOwner ? (
+        <div
+          style={{ borderTop: "1px solid var(--border)", marginTop: 0 }}
+        >
+          <div
+            className="px-4 pt-4 pb-2"
+            style={{
+              borderBottom: "1px solid var(--border)",
+              background: "var(--surface-2)",
+            }}
+          >
+            <div
+              className="text-muted"
+              style={{
+                fontSize: 11,
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+                fontWeight: 500,
+              }}
+            >
+              Inbox
+            </div>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 600,
+                marginTop: 2,
+              }}
+            >
+              Recent dispatches
+            </div>
+            <p
+              className="text-muted"
+              style={{ fontSize: 12, lineHeight: 1.5, marginTop: 2 }}
+            >
+              Every push the dispatcher processed. Auto-refreshes every 15s.
+            </p>
+          </div>
+          <NotificationInbox />
+        </div>
+      ) : null}
+    </Section>
   );
 }
 

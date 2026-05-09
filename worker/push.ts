@@ -6,6 +6,10 @@
 //   POST /api/push/subscribe            (auth) → store this user's
 //                                         subscription.
 //   POST /api/push/unsubscribe          (auth) → remove by endpoint.
+//   POST /api/push/test                 (auth) → send a "you're wired
+//                                         up" push to all of this
+//                                         user's devices. Used by the
+//                                         Settings page.
 //   GET  /api/push/vapid-setup          (owner) → generate a fresh
 //                                         keypair and show it once,
 //                                         with paste-into-Cloudflare
@@ -13,7 +17,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { corsHeaders, type Env } from "./index";
-import { generateVapidKeys } from "./webpush";
+import { generateVapidKeys, sendPush } from "./webpush";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -116,6 +120,59 @@ export async function handleSubscribe(
   );
   if (error) return json({ error: error.message }, 502);
   return json({ ok: true });
+}
+
+export async function handleTestSend(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const user = await authedUser(request, env);
+  if (!user) return json({ error: "unauthorized" }, 401);
+  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY || !env.VAPID_SUBJECT) {
+    return json({ error: "VAPID not configured" }, 503);
+  }
+  const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: subs } = await sb
+    .from("push_subscriptions")
+    .select("id, endpoint, p256dh, auth")
+    .eq("user_id", user.id);
+  if (!subs || subs.length === 0) {
+    return json({ error: "no subscribed devices" }, 404);
+  }
+  const payload = JSON.stringify({
+    title: "Test notification",
+    body: "If you can see this, push is wired up correctly.",
+    url: "/settings",
+    tag: "test-push",
+    urgency: "high",
+  });
+  let ok = 0;
+  let failed = 0;
+  await Promise.all(
+    subs.map(async (s) => {
+      try {
+        const r = await sendPush(
+          env,
+          {
+            endpoint: s.endpoint as string,
+            keys: { p256dh: s.p256dh as string, auth: s.auth as string },
+          },
+          payload,
+          { ttl: 60, urgency: "high" },
+        );
+        if (r.ok) ok++;
+        else failed++;
+        if (r.gone) {
+          await sb.from("push_subscriptions").delete().eq("id", s.id);
+        }
+      } catch {
+        failed++;
+      }
+    }),
+  );
+  return json({ ok: true, sent: ok, failed, devices: subs.length });
 }
 
 export async function handleUnsubscribe(

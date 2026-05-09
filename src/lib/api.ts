@@ -310,6 +310,110 @@ export async function isVapidConfigured(): Promise<boolean> {
   }
 }
 
+// ── Notification preferences (current user) ────────────────────────
+export async function listMyNotificationPrefs(): Promise<
+  import("./types").NotificationPref[]
+> {
+  const { data, error } = await supabase
+    .from("notification_prefs")
+    .select("*");
+  if (error) throw error;
+  return (data ?? []) as import("./types").NotificationPref[];
+}
+
+export async function setNotificationPref(
+  kind: import("./types").NotificationKind,
+  enabled: boolean,
+): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in");
+  const { error } = await supabase
+    .from("notification_prefs")
+    .upsert(
+      { user_id: user.id, kind, enabled },
+      { onConflict: "user_id,kind" },
+    );
+  if (error) throw error;
+}
+
+export async function getMyQuietHours(): Promise<
+  import("./types").QuietHours | null
+> {
+  const { data, error } = await supabase
+    .from("notification_quiet_hours")
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  return (data as import("./types").QuietHours | null) ?? null;
+}
+
+export async function upsertMyQuietHours(qh: {
+  start_local: string;
+  end_local: string;
+  tz?: string;
+}): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in");
+  const { error } = await supabase.from("notification_quiet_hours").upsert(
+    {
+      user_id: user.id,
+      start_local: qh.start_local,
+      end_local: qh.end_local,
+      tz: qh.tz ?? "America/Los_Angeles",
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+  if (error) throw error;
+}
+
+// Send a "you're wired up" push to every device of the current user.
+// Useful as a self-test in Settings.
+export async function sendTestNotification(): Promise<{
+  sent: number;
+  failed: number;
+  devices: number;
+}> {
+  const session = (await supabase.auth.getSession()).data.session;
+  if (!session) throw new Error("Not signed in");
+  const res = await fetch("/api/push/test", {
+    method: "POST",
+    headers: { authorization: `Bearer ${session.access_token}` },
+  });
+  const body = (await res.json()) as {
+    sent?: number;
+    failed?: number;
+    devices?: number;
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return {
+    sent: body.sent ?? 0,
+    failed: body.failed ?? 0,
+    devices: body.devices ?? 0,
+  };
+}
+
+// ── Notification inbox / activity log ──────────────────────────────
+export async function listNotificationInbox(opts?: {
+  limit?: number;
+}): Promise<import("./types").NotificationInboxRow[]> {
+  let q = supabase
+    .from("notification_inbox")
+    .select("*")
+    .order("created_at", { ascending: false });
+  q = q.limit(opts?.limit ?? 100);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []) as import("./types").NotificationInboxRow[];
+}
+
 // ── Profile (current user) ─────────────────────────────────────────
 export async function updateMyProfile(patch: {
   full_name?: string | null;
