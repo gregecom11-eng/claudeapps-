@@ -19,15 +19,17 @@ import { Rides } from "./routes/Rides";
 import { RideDetail } from "./routes/RideDetail";
 import { RideForm } from "./routes/RideForm";
 import { Settings } from "./routes/Settings";
+import { Vapid } from "./routes/Vapid";
 
 export function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Public: anyone (no auth) can land on /book or /install */}
+          {/* Public: anyone (no auth) can land on /book, /install, /vapid */}
           <Route path="/book" element={<Book />} />
           <Route path="/install" element={<Install />} />
+          <Route path="/vapid" element={<Vapid />} />
           {/* Everything else goes through the auth + role gate */}
           <Route path="/*" element={<Gate />} />
         </Routes>
