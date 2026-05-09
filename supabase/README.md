@@ -20,3 +20,15 @@ where id = (select id from auth.users where email = 'romolts1@gmail.com');
 ```
 
 That's it.
+
+## Adding migrations
+
+The numbered files (`02_…sql` … `08_…sql`) are migrations that run in order
+on top of `schema.sql`. They're idempotent — safe to re-run. Apply each one
+the same way: paste into a new SQL Editor query and click **Run**.
+
+`08_notifications.sql` adds the notification dispatcher: an outbox
+(`notification_events`), per-user prefs and quiet hours, a delivery log,
+and triggers on `rides` that auto-enqueue events on create / assign /
+status change / cancellation. The Cloudflare cron worker reads the outbox
+every ~5 minutes and sends the actual Web Push messages.

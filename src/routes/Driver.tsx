@@ -19,6 +19,7 @@ import {
 } from "../lib/realtime";
 import { Avatar } from "../components/Avatar";
 import { Icon, type IconName } from "../components/Icon";
+import { NotificationPrefs } from "../components/NotificationPrefs";
 import { PushToggle } from "../components/PushToggle";
 import { RideRowSkeleton } from "../components/Skeleton";
 import { StatusBadge } from "../components/StatusBadge";
@@ -1353,6 +1354,38 @@ export function DriverProfile() {
       </div>
 
       <PushToggle hint="Get a heads-up 90 minutes before each ride. Tap a notification to jump to the briefing." />
+
+      <div
+        className="surface rounded-[12px]"
+        style={{ overflow: "hidden" }}
+      >
+        <div
+          className="px-4 pt-3 pb-2"
+          style={{ borderBottom: "1px solid var(--border)" }}
+        >
+          <div
+            className="text-muted"
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              fontWeight: 500,
+            }}
+          >
+            What pings you
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>
+            Notification preferences
+          </div>
+        </div>
+        <NotificationPrefs
+          role="driver"
+          flash={(m) => {
+            setMsg(m);
+            window.setTimeout(() => setMsg(null), 2400);
+          }}
+        />
+      </div>
     </div>
   );
 }

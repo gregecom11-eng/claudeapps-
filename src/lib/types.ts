@@ -150,3 +150,50 @@ export type RideExtra = {
   added_by: string | null;
   added_at: string;
 };
+
+export type NotificationKind =
+  | "ride_created"
+  | "ride_assigned"
+  | "ride_status_changed"
+  | "ride_cancelled"
+  | "pickup_reminder";
+
+export type NotificationStatus = "pending" | "sent" | "failed" | "skipped";
+
+export type NotificationPref = {
+  user_id: string;
+  kind: NotificationKind;
+  enabled: boolean;
+};
+
+export type QuietHours = {
+  user_id: string;
+  start_local: string; // "HH:MM:SS"
+  end_local: string;
+  tz: string;
+  updated_at?: string;
+};
+
+export type NotificationInboxRow = {
+  id: string;
+  kind: NotificationKind;
+  status: NotificationStatus;
+  scheduled_for: string;
+  sent_at: string | null;
+  created_at: string;
+  attempts: number;
+  last_error: string | null;
+  recipients: Array<{ user_id?: string; role?: string }>;
+  payload: {
+    title: string;
+    body: string;
+    url?: string;
+    tag?: string;
+    urgency?: "very-low" | "low" | "normal" | "high";
+  };
+  ride_id: string | null;
+  passenger_name: string | null;
+  pickup_at: string | null;
+  pickup_address: string | null;
+  dropoff_address: string | null;
+};

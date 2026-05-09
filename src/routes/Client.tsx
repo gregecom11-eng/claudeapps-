@@ -8,6 +8,8 @@ import { claimClientByEmail, listRides } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { BUSINESS_TZ, fmtMoney, fmtTime } from "../lib/format";
 import { Icon } from "../components/Icon";
+import { NotificationPrefs } from "../components/NotificationPrefs";
+import { PushToggle } from "../components/PushToggle";
 import type { Client, Ride } from "../lib/types";
 
 export function Client() {
@@ -190,6 +192,8 @@ export function Client() {
         </section>
       ) : null}
 
+      <ClientNotificationsCard />
+
       <div
         className="text-center pt-4"
         style={{ borderTop: "1px solid var(--border)" }}
@@ -202,6 +206,55 @@ export function Client() {
         </p>
       </div>
     </div>
+  );
+}
+
+function ClientNotificationsCard() {
+  const [toast, setToast] = useState<string | null>(null);
+  const flash = (m: string) => {
+    setToast(m);
+    window.setTimeout(() => setToast(null), 2400);
+  };
+  return (
+    <section>
+      <SectionHeader title="Stay in the loop" />
+      <div className="space-y-3">
+        <PushToggle hint="Get a ping when your driver is on the way and when they arrive." />
+        <div
+          className="surface rounded-[12px]"
+          style={{ overflow: "hidden" }}
+        >
+          <div
+            className="px-4 pt-3 pb-2"
+            style={{ borderBottom: "1px solid var(--border)" }}
+          >
+            <div
+              className="text-muted"
+              style={{
+                fontSize: 11,
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+                fontWeight: 500,
+              }}
+            >
+              Preferences
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>
+              Notification settings
+            </div>
+          </div>
+          <NotificationPrefs role="client" flash={flash} />
+        </div>
+        {toast ? (
+          <div
+            className="text-success text-sm"
+            style={{ paddingLeft: 4 }}
+          >
+            {toast}
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 

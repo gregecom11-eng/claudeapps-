@@ -12,6 +12,7 @@ import { handleInviteRequest } from "./invite";
 import { handleMcpRequest } from "./mcp";
 import {
   handleSubscribe,
+  handleTestSend,
   handleUnsubscribe,
   handleVapidPublic,
   handleVapidSetup,
@@ -79,6 +80,16 @@ export default {
           { status: 405, headers: corsHeaders() },
         );
       return handleSubscribe(request, env);
+    }
+    if (url.pathname === "/api/push/test") {
+      if (request.method === "OPTIONS")
+        return new Response(null, { status: 204, headers: corsHeaders() });
+      if (request.method !== "POST")
+        return Response.json(
+          { error: "method not allowed" },
+          { status: 405, headers: corsHeaders() },
+        );
+      return handleTestSend(request, env);
     }
     if (url.pathname === "/api/push/unsubscribe") {
       if (request.method === "OPTIONS")
