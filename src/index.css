@@ -294,6 +294,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   }
 }
 
+/* Big-text accessibility mode (Driver / Profile toggle). The app uses
+   inline pixel font sizes throughout, so the lightest-touch way to
+   scale the whole UI is `zoom` on <body> — supported in Chrome/Safari
+   since forever and Firefox 126+. */
+:root[data-bigtext="true"] body {
+  zoom: 1.125;
+}
+
 /* Print: collapse the app chrome and show the waybill on a clean page.
    The waybill content keeps `.waybill-print`; everything else gets
    `.no-print` and is hidden. */

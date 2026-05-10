@@ -16,6 +16,7 @@ import {
   updateRideStatus,
 } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { useBigText } from "../lib/useBigText";
 import { downloadICS } from "../lib/calendar";
 import { BUSINESS_TZ, fmtDate, fmtMoney, fmtTime } from "../lib/format";
 import {
@@ -134,6 +135,20 @@ export function Driver() {
 
   // Realtime — refresh when ANY ride visible to this driver changes.
   useRideRealtime(reload);
+
+  // Broadcast "any ride is in flight" so the bottom tab bar can show a
+  // status dot on Today regardless of which tab is foregrounded.
+  useEffect(() => {
+    const active = (today ?? []).some(
+      (r) =>
+        r.status === "on_the_way" ||
+        r.status === "arrived" ||
+        r.status === "in_progress",
+    );
+    window.dispatchEvent(
+      new CustomEvent("sdl:driver-active-ride", { detail: { active } }),
+    );
+  }, [today]);
 
   const vehiclesById = useMemo(
     () => new Map(vehicles.map((v) => [v.id, v])),
@@ -2352,6 +2367,8 @@ export function DriverProfile() {
 
       <PushToggle hint="Get a heads-up 90 minutes before each ride. Tap a notification to jump to the briefing." />
 
+      <BigTextCard />
+
       <div
         className="surface rounded-[12px]"
         style={{ overflow: "hidden" }}
@@ -2417,6 +2434,72 @@ function Field({
       </label>
       {children}
       {hint ? <div className="help">{hint}</div> : null}
+    </div>
+  );
+}
+
+/* ── Big-text accessibility toggle ───────────────────────────── */
+function BigTextCard() {
+  const [on, setOn] = useBigText();
+  return (
+    <div
+      className="surface rounded-[12px] p-4 flex items-center gap-3"
+      style={{ border: "1px solid var(--border)" }}
+    >
+      <span
+        className="inline-grid place-items-center"
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 8,
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          color: on ? "var(--accent)" : "var(--text-muted)",
+          fontWeight: 700,
+          fontSize: 15,
+          flexShrink: 0,
+        }}
+      >
+        Aa
+      </span>
+      <div className="flex-1 min-w-0">
+        <div style={{ fontSize: 14, fontWeight: 600 }}>Bigger text</div>
+        <div
+          className="text-muted"
+          style={{ fontSize: 12, lineHeight: 1.5 }}
+        >
+          Scales the whole app up about 12% — easier to read in glare or
+          when wearing readers. Saved to this device.
+        </div>
+      </div>
+      <button
+        role="switch"
+        aria-checked={on}
+        onClick={() => setOn(!on)}
+        className="relative shrink-0"
+        style={{
+          width: 40,
+          height: 24,
+          borderRadius: 999,
+          background: on ? "var(--accent)" : "var(--surface-2)",
+          border: `1px solid ${on ? "var(--accent-strong)" : "var(--border)"}`,
+          cursor: "pointer",
+          transition: "background 120ms ease, border-color 120ms ease",
+        }}
+      >
+        <span
+          style={{
+            position: "absolute",
+            top: 2,
+            left: on ? 18 : 2,
+            width: 18,
+            height: 18,
+            borderRadius: 999,
+            background: on ? "#15161B" : "var(--text-muted)",
+            transition: "left 140ms ease",
+          }}
+        />
+      </button>
     </div>
   );
 }
