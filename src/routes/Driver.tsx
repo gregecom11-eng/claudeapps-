@@ -136,6 +136,16 @@ export function Driver() {
   // Realtime — refresh when ANY ride visible to this driver changes.
   useRideRealtime(reload);
 
+  // Broadcast the dispatcher-set driver name so the shell header can
+  // show "Hey Mike" instead of falling back to the auth email.
+  useEffect(() => {
+    if (linked === "loading" || !linked) return;
+    const name = driverDisplayName(linked, profile?.full_name);
+    window.dispatchEvent(
+      new CustomEvent("sdl:driver-name", { detail: { name } }),
+    );
+  }, [linked, profile?.full_name]);
+
   // Broadcast "any ride is in flight" so the bottom tab bar can show a
   // status dot on Today regardless of which tab is foregrounded.
   useEffect(() => {
@@ -188,7 +198,7 @@ export function Driver() {
           className="mt-1"
           style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.02em" }}
         >
-          {firstName(profile?.full_name ?? linked.full_name)}'s day
+          {firstName(driverDisplayName(linked, profile?.full_name))}'s day
         </h1>
         <p
           className="text-muted mt-1"
@@ -1753,6 +1763,25 @@ function firstName(s: string | null | undefined): string {
   return s.split(/\s+/)[0].replace(/[(),]/g, "");
 }
 
+// What to call the driver in greetings. Prefer the dispatcher-set
+// `drivers.full_name` because the auth profile's full_name silently
+// falls back to the email when sign-up metadata wasn't supplied
+// (see handle_new_user trigger in schema.sql) — and "you@example.com"
+// is a terrible thing to greet someone with.
+function looksLikeEmail(s: string | null | undefined): boolean {
+  return !!s && /\S+@\S+\.\S+/.test(s);
+}
+function driverDisplayName(
+  linked: DriverType | null,
+  profileName: string | null | undefined,
+): string {
+  if (linked?.full_name && linked.full_name.trim().length > 0) {
+    return linked.full_name;
+  }
+  if (profileName && !looksLikeEmail(profileName)) return profileName;
+  return "Driver";
+}
+
 function groupByBucket(rides: Ride[]) {
   const out: Record<Bucket, Ride[]> = {
     Morning: [],
@@ -1846,24 +1875,43 @@ export function DriverPast() {
 
   const grouped = useMemo(() => groupByPastWeek(filtered), [filtered]);
 
-  // Earnings card always shows *this week*'s completed rides regardless
-  // of the active filter — it's a constant "how am I doing" pulse.
-  const thisWeekStats = useMemo(() => {
-    const all = rides ?? [];
-    const start = startOfThisWeekLA();
-    const wk = all.filter(
-      (r) =>
-        r.status === "completed" && new Date(r.pickup_at) >= start,
+  // Earnings dashboard — completed rides bucketed by time window. The
+  // hero card always renders so the driver isn't staring at a blank
+  // page on a fresh account; an empty state nudges them to keep going.
+  const earnings = useMemo(() => {
+    const all = (rides ?? []).filter((r) => r.status === "completed");
+    const thisStart = startOfThisWeekLA();
+    const lastStart = new Date(
+      thisStart.getTime() - 7 * 24 * 60 * 60 * 1000,
     );
+    const monthStart = startOfThisMonthLA();
+    const totals = (list: Ride[]) => ({
+      count: list.length,
+      fares: list.reduce((s, r) => s + (r.fare_cents ?? 0), 0),
+      tips: list.reduce((s, r) => s + (r.gratuity_cents ?? 0), 0),
+      parking: list.reduce((s, r) => s + (r.parking_cents ?? 0), 0),
+      gross: list.reduce((s, r) => s + (r.total_cents ?? 0), 0),
+    });
     return {
-      count: wk.length,
-      fares: wk.reduce((s, r) => s + (r.fare_cents ?? 0), 0),
-      tips: wk.reduce((s, r) => s + (r.gratuity_cents ?? 0), 0),
+      thisWeek: totals(
+        all.filter((r) => new Date(r.pickup_at) >= thisStart),
+      ),
+      lastWeek: totals(
+        all.filter(
+          (r) =>
+            new Date(r.pickup_at) >= lastStart &&
+            new Date(r.pickup_at) < thisStart,
+        ),
+      ),
+      thisMonth: totals(
+        all.filter((r) => new Date(r.pickup_at) >= monthStart),
+      ),
+      allTime: totals(all),
     };
   }, [rides]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="flex items-center gap-3">
         <Link
           to="/"
@@ -1873,40 +1921,81 @@ export function DriverPast() {
           <Icon name="back" size={13} /> Today
         </Link>
       </div>
-      <h1
-        style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}
-      >
-        Past rides
-      </h1>
+      <div>
+        <h1
+          style={{
+            fontSize: 26,
+            fontWeight: 600,
+            letterSpacing: "-0.02em",
+          }}
+        >
+          Earnings
+        </h1>
+        <p
+          className="text-muted mt-1"
+          style={{ fontSize: 13.5, lineHeight: 1.5 }}
+        >
+          {earnings.allTime.count === 0
+            ? "Once you mark rides complete, your tally lives here."
+            : `${earnings.allTime.count} completed ${
+                earnings.allTime.count === 1 ? "ride" : "rides"
+              } · ${fmtMoney(earnings.allTime.gross)} all time.`}
+        </p>
+      </div>
 
       {error ? <div className="text-danger text-sm">{error}</div> : null}
 
-      <ThisWeekCard
-        rides={thisWeekStats.count}
-        fares={thisWeekStats.fares}
-        tips={thisWeekStats.tips}
+      <EarningsHero
+        loading={rides === null}
+        thisWeek={earnings.thisWeek}
+        lastWeek={earnings.lastWeek}
       />
 
-      <PastSearchAndFilter
-        search={search}
-        onSearch={setSearch}
-        filter={filter}
-        onFilter={setFilter}
-        counts={counts}
+      <ComparisonRow
+        lastWeek={earnings.lastWeek}
+        thisMonth={earnings.thisMonth}
+        allTime={earnings.allTime}
       />
+
+      <div>
+        <h2
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            marginBottom: 10,
+          }}
+        >
+          Trip history
+        </h2>
+
+        <PastSearchAndFilter
+          search={search}
+          onSearch={setSearch}
+          filter={filter}
+          onFilter={setFilter}
+          counts={counts}
+        />
+      </div>
 
       {rides === null ? (
         <div className="text-muted text-sm">Loading…</div>
       ) : filtered.length === 0 ? (
         <div
-          className="surface rounded-[12px] p-5 text-center text-muted"
+          className="surface rounded-[12px] p-6 text-center"
           style={{ fontSize: 13.5 }}
         >
-          {search.trim()
-            ? "No matches."
-            : filter === "cancelled"
-            ? "No cancelled rides on record."
-            : "No completed rides yet."}
+          <div
+            className="text-muted"
+            style={{ fontSize: 13.5, lineHeight: 1.6 }}
+          >
+            {search.trim()
+              ? "No rides match this search."
+              : filter === "cancelled"
+              ? "No cancelled rides on record — nice."
+              : "No completed rides yet. Once you finish a trip and tap Complete, it'll show up here with the fare and tip."}
+          </div>
         </div>
       ) : (
         <div className="space-y-5">
@@ -1934,6 +2023,22 @@ export function DriverPast() {
                   className="flex-1 h-px"
                   style={{ background: "var(--border)" }}
                 />
+                {filter === "completed" ? (
+                  <span
+                    className="tnum"
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {fmtMoney(
+                      items.reduce(
+                        (s, r) => s + (r.total_cents ?? 0),
+                        0,
+                      ),
+                    )}
+                  </span>
+                ) : null}
               </div>
               <ul className="surface rounded-[12px] divide-y divide-border">
                 {items.map((r) => {
@@ -1958,7 +2063,24 @@ export function DriverPast() {
                           {v ? ` · ${v.display_name}` : ""}
                         </div>
                       </div>
-                      <StatusBadge status={r.status} />
+                      {filter === "completed" ? (
+                        <div
+                          className="tnum text-right shrink-0"
+                          style={{ fontSize: 13.5, fontWeight: 600 }}
+                        >
+                          {fmtMoney(r.total_cents ?? 0)}
+                          {(r.gratuity_cents ?? 0) > 0 ? (
+                            <div
+                              className="text-muted"
+                              style={{ fontSize: 11, fontWeight: 500 }}
+                            >
+                              tip {fmtMoney(r.gratuity_cents)}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <StatusBadge status={r.status} />
+                      )}
                     </li>
                   );
                 })}
@@ -1971,62 +2093,215 @@ export function DriverPast() {
   );
 }
 
-function ThisWeekCard({
-  rides,
-  fares,
-  tips,
-}: {
-  rides: number;
+type EarningsBucket = {
+  count: number;
   fares: number;
   tips: number;
+  parking: number;
+  gross: number;
+};
+
+// Hero "this week" card: huge gross-earnings number plus a four-up
+// breakdown (rides / fares / tips / parking) and a delta vs last week.
+// Always renders so a fresh test driver still sees something useful.
+function EarningsHero({
+  loading,
+  thisWeek,
+  lastWeek,
+}: {
+  loading: boolean;
+  thisWeek: EarningsBucket;
+  lastWeek: EarningsBucket;
 }) {
-  // Don't show the card if there's literally nothing to report — the
-  // "no completed rides" empty state covers that case.
-  if (rides === 0) return null;
+  const delta = thisWeek.gross - lastWeek.gross;
+  const showDelta = lastWeek.gross > 0 || lastWeek.count > 0;
+  const deltaPositive = delta >= 0;
   return (
     <div
-      className="surface rounded-[12px] p-4"
-      style={{ border: "1px solid var(--border)" }}
+      className="rounded-[14px] p-5 relative overflow-hidden"
+      style={{
+        background:
+          "linear-gradient(135deg, color-mix(in oklab, var(--accent) 18%, var(--surface)) 0%, var(--surface) 70%)",
+        border: "1px solid color-mix(in oklab, var(--accent) 35%, var(--border))",
+      }}
     >
-      <div
-        className="text-muted"
-        style={{
-          fontSize: 11,
-          letterSpacing: "0.06em",
-          textTransform: "uppercase",
-          fontWeight: 500,
-        }}
-      >
-        This week
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div
+          className="text-muted"
+          style={{
+            fontSize: 11.5,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontWeight: 600,
+          }}
+        >
+          This week
+        </div>
+        {showDelta && !loading ? (
+          <span
+            className="chip tnum"
+            title={
+              deltaPositive
+                ? `${fmtMoney(delta)} more than last week`
+                : `${fmtMoney(Math.abs(delta))} less than last week`
+            }
+            style={{
+              background: "transparent",
+              color: deltaPositive ? "var(--success)" : "var(--text-muted)",
+              borderColor: deltaPositive
+                ? "color-mix(in oklab, var(--success) 50%, var(--border))"
+                : "var(--border)",
+              fontSize: 11.5,
+            }}
+          >
+            <span
+              style={{
+                display: "inline-block",
+                transform: deltaPositive ? "none" : "rotate(180deg)",
+              }}
+            >
+              ↑
+            </span>
+            {deltaPositive ? "+" : "−"}
+            {fmtMoney(Math.abs(delta))} vs last
+          </span>
+        ) : null}
       </div>
       <div
-        className="mt-2 grid"
-        style={{ gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}
+        className="tnum"
+        style={{
+          fontSize: 40,
+          fontWeight: 700,
+          letterSpacing: "-0.03em",
+          lineHeight: 1.05,
+        }}
       >
-        <Stat label={rides === 1 ? "ride" : "rides"} value={String(rides)} />
-        <Stat label="fares" value={fmtMoney(fares)} />
-        <Stat label="tips" value={fmtMoney(tips)} />
+        {loading ? "—" : fmtMoney(thisWeek.gross)}
+      </div>
+      <div
+        className="text-muted mt-1"
+        style={{ fontSize: 13, lineHeight: 1.5 }}
+      >
+        {loading
+          ? "Loading…"
+          : thisWeek.count === 0
+          ? "No completed rides yet this week — your hero number lives here."
+          : `${thisWeek.count} ${
+              thisWeek.count === 1 ? "ride" : "rides"
+            } · ${fmtMoney(thisWeek.fares)} fares · ${fmtMoney(
+              thisWeek.tips,
+            )} tips`}
+      </div>
+      <div
+        className="mt-4 grid"
+        style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}
+      >
+        <MiniStat
+          label={thisWeek.count === 1 ? "ride" : "rides"}
+          value={String(thisWeek.count)}
+        />
+        <MiniStat label="fares" value={fmtMoney(thisWeek.fares)} />
+        <MiniStat label="tips" value={fmtMoney(thisWeek.tips)} />
+        <MiniStat label="parking" value={fmtMoney(thisWeek.parking)} />
       </div>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function ComparisonRow({
+  lastWeek,
+  thisMonth,
+  allTime,
+}: {
+  lastWeek: EarningsBucket;
+  thisMonth: EarningsBucket;
+  allTime: EarningsBucket;
+}) {
+  return (
+    <div
+      className="grid"
+      style={{ gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}
+    >
+      <CompareTile
+        label="Last week"
+        bucket={lastWeek}
+      />
+      <CompareTile
+        label="This month"
+        bucket={thisMonth}
+      />
+      <CompareTile
+        label="All time"
+        bucket={allTime}
+      />
+    </div>
+  );
+}
+
+function CompareTile({
+  label,
+  bucket,
+}: {
+  label: string;
+  bucket: EarningsBucket;
+}) {
+  return (
+    <div
+      className="rounded-[12px] p-3"
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+      }}
+    >
+      <div
+        className="text-muted"
+        style={{
+          fontSize: 10.5,
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+          fontWeight: 500,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        className="tnum mt-1.5"
+        style={{
+          fontSize: 17,
+          fontWeight: 600,
+          letterSpacing: "-0.02em",
+          lineHeight: 1.1,
+        }}
+      >
+        {fmtMoney(bucket.gross)}
+      </div>
+      <div
+        className="text-muted tnum"
+        style={{ fontSize: 11, marginTop: 2 }}
+      >
+        {bucket.count} {bucket.count === 1 ? "ride" : "rides"}
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <div
         className="tnum"
         style={{
-          fontSize: 20,
+          fontSize: 18,
           fontWeight: 600,
           letterSpacing: "-0.02em",
+          lineHeight: 1.15,
         }}
       >
         {value}
       </div>
       <div
         className="text-muted"
-        style={{ fontSize: 11.5, marginTop: 1 }}
+        style={{ fontSize: 11, marginTop: 1, letterSpacing: "0.02em" }}
       >
         {label}
       </div>
@@ -2109,6 +2384,19 @@ function PastSearchAndFilter({
       </div>
     </div>
   );
+}
+
+/* ── LA-time month helper (1st of the current month, 00:00) ───── */
+function startOfThisMonthLA(): Date {
+  const now = new Date();
+  const ymd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TZ,
+    year: "numeric",
+    month: "2-digit",
+  })
+    .format(now); // "2026-05"
+  const off = laOffsetFor(now);
+  return new Date(`${ymd}-01T00:00:00${off}`);
 }
 
 /* ── LA-time week helpers (Mon → Sun) ─────────────────────────── */
