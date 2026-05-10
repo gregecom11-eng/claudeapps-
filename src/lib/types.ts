@@ -58,6 +58,9 @@ export type Driver = {
   email: string | null;
   license_no: string | null;
   active: boolean;
+  available?: boolean;
+  default_vehicle_id?: string | null;
+  last_seen_at?: string | null;
   notes: string | null;
   created_at: string;
 };
@@ -105,6 +108,7 @@ export type Ride = {
   billing_terms: BillingTerms | null;
 
   notes: string | null;
+  driver_notes?: string | null;
 
   created_at: string;
   updated_at: string;

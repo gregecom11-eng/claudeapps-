@@ -232,6 +232,40 @@ export async function claimDriverByEmail(): Promise<Driver | null> {
 // "My today" / "my tomorrow" rely on RLS — RLS is what scopes the rows
 // to the current driver. The same listRides() works.
 
+// Driver self-service — toggle availability and choose a default vehicle.
+// Both run through a security-definer RPC because driver rows aren't
+// writable under RLS. Returns the updated driver row, or null if the
+// 09_driver_status.sql migration hasn't been applied yet.
+export async function updateMyDriverSelf(patch: {
+  available?: boolean;
+  default_vehicle_id?: string | null;
+}): Promise<Driver | null> {
+  // Clearing the vehicle preference needs a dedicated RPC since the
+  // updater coalesces nulls (can't tell "leave alone" from "clear").
+  if (patch.default_vehicle_id === null) {
+    const { data, error } = await supabase.rpc("clear_my_default_vehicle");
+    if (error) throw error;
+    if (patch.available === undefined) return (data as Driver | null) ?? null;
+  }
+  const { data, error } = await supabase.rpc("update_my_driver_self", {
+    p_available: patch.available ?? null,
+    p_default_vehicle_id:
+      patch.default_vehicle_id === null ? null : patch.default_vehicle_id,
+  });
+  if (error) throw error;
+  return (data as Driver | null) ?? null;
+}
+
+// Cheap heartbeat — bumps drivers.last_seen_at for the current user.
+// Soft-fails so a missing migration never breaks the Today screen.
+export async function markDriverSeen(): Promise<void> {
+  try {
+    await supabase.rpc("mark_driver_seen");
+  } catch {
+    /* migration not applied yet — silent no-op */
+  }
+}
+
 // Generate a magic-link sign-in URL for the given email, server-side
 // (uses Supabase admin API). Doesn't email — returns the URL so the
 // dashboard can show it for the owner to copy and share via SMS, etc.
@@ -621,4 +655,56 @@ export async function listEvents(limit = 30): Promise<ActivityEvent[]> {
     .limit(limit);
   if (error) throw error;
   return data ?? [];
+}
+
+// Status-change events for a single ride. Used by the driver sheet to
+// stamp "Arrived 11:12 AM" alongside the progress strip.
+export async function listRideEvents(
+  rideId: string,
+): Promise<ActivityEvent[]> {
+  const { data, error } = await supabase
+    .from("events")
+    .select("*")
+    .eq("ride_id", rideId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+// Past rides for the same passenger (matched by name OR client_id).
+// Used by the "passenger history" card on the driver ride sheet.
+export async function listPassengerHistory(
+  ride: Ride,
+): Promise<Ride[]> {
+  let q = supabase
+    .from("rides")
+    .select("*")
+    .eq("status", "completed")
+    .neq("id", ride.id)
+    .order("pickup_at", { ascending: false })
+    .limit(20);
+  if (ride.client_id) {
+    q = q.eq("client_id", ride.client_id);
+  } else {
+    q = q.eq("passenger_name", ride.passenger_name);
+  }
+  const { data, error } = await q;
+  if (error) throw error;
+  return data ?? [];
+}
+
+// ── Driver post-trip notes ────────────────────────────────────────
+// Driver can annotate a ride after the fact ("address is around the
+// back", "passenger asked for water"). Distinct from the dispatch
+// `notes` field. Goes through a security-definer RPC because drivers
+// can only update `status` directly under RLS.
+export async function setDriverNotes(
+  rideId: string,
+  notes: string | null,
+): Promise<void> {
+  const { error } = await supabase.rpc("set_driver_notes", {
+    p_ride_id: rideId,
+    p_notes: notes,
+  });
+  if (error) throw error;
 }
