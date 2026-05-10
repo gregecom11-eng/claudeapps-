@@ -13,6 +13,7 @@ import {
   setNotificationPref,
   upsertMyQuietHours,
 } from "../lib/api";
+import { getPushState, type PushState } from "../lib/push";
 import type { NotificationKind, UserRole } from "../lib/types";
 import { Icon } from "./Icon";
 
@@ -81,6 +82,31 @@ export function NotificationPrefs({
   const [qhEnabled, setQhEnabled] = useState(true);
   const [savingQh, setSavingQh] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [pushState, setPushState] = useState<PushState>("off");
+
+  // Watch push state so the "Send test" button can be greyed out with a
+  // helpful hint when the user hasn't subscribed yet — fixes the silent
+  // no-op the previous version showed.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getPushState()
+        .then((s) => {
+          if (!cancelled) setPushState(s);
+        })
+        .catch(() => {
+          if (!cancelled) setPushState("unsupported");
+        });
+    };
+    refresh();
+    window.addEventListener("sdl:pushstatechange", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("sdl:pushstatechange", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
 
   useEffect(() => {
     Promise.all([listMyNotificationPrefs(), getMyQuietHours()])
@@ -325,17 +351,30 @@ export function NotificationPrefs({
         style={{ borderTop: "1px solid var(--border)" }}
       >
         <div className="text-muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-          Send yourself a test push right now to verify this device is
-          subscribed.
+          {pushState === "on"
+            ? "Send yourself a test push right now to verify this device is subscribed."
+            : pushState === "denied"
+            ? "Notifications are blocked in your browser settings — re-enable them and reload."
+            : pushState === "unsupported"
+            ? "This browser doesn't support push notifications."
+            : "Turn on push notifications above first, then come back to send a test."}
         </div>
         <button
           onClick={sendTest}
-          disabled={testing}
+          disabled={testing || pushState !== "on"}
+          title={
+            pushState !== "on"
+              ? "Turn on push notifications first."
+              : undefined
+          }
           className="inline-flex items-center gap-2 h-9 px-3 rounded-[8px] text-[13px] font-medium"
           style={{
             background: "transparent",
             color: "var(--text)",
             border: "1px solid var(--border)",
+            opacity: pushState !== "on" ? 0.5 : 1,
+            cursor:
+              testing || pushState !== "on" ? "not-allowed" : "pointer",
           }}
         >
           <Icon name="bell" size={13} />

@@ -58,6 +58,9 @@ export type Driver = {
   email: string | null;
   license_no: string | null;
   active: boolean;
+  available?: boolean;
+  default_vehicle_id?: string | null;
+  last_seen_at?: string | null;
   notes: string | null;
   created_at: string;
 };

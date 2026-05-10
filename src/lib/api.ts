@@ -232,6 +232,40 @@ export async function claimDriverByEmail(): Promise<Driver | null> {
 // "My today" / "my tomorrow" rely on RLS — RLS is what scopes the rows
 // to the current driver. The same listRides() works.
 
+// Driver self-service — toggle availability and choose a default vehicle.
+// Both run through a security-definer RPC because driver rows aren't
+// writable under RLS. Returns the updated driver row, or null if the
+// 09_driver_status.sql migration hasn't been applied yet.
+export async function updateMyDriverSelf(patch: {
+  available?: boolean;
+  default_vehicle_id?: string | null;
+}): Promise<Driver | null> {
+  // Clearing the vehicle preference needs a dedicated RPC since the
+  // updater coalesces nulls (can't tell "leave alone" from "clear").
+  if (patch.default_vehicle_id === null) {
+    const { data, error } = await supabase.rpc("clear_my_default_vehicle");
+    if (error) throw error;
+    if (patch.available === undefined) return (data as Driver | null) ?? null;
+  }
+  const { data, error } = await supabase.rpc("update_my_driver_self", {
+    p_available: patch.available ?? null,
+    p_default_vehicle_id:
+      patch.default_vehicle_id === null ? null : patch.default_vehicle_id,
+  });
+  if (error) throw error;
+  return (data as Driver | null) ?? null;
+}
+
+// Cheap heartbeat — bumps drivers.last_seen_at for the current user.
+// Soft-fails so a missing migration never breaks the Today screen.
+export async function markDriverSeen(): Promise<void> {
+  try {
+    await supabase.rpc("mark_driver_seen");
+  } catch {
+    /* migration not applied yet — silent no-op */
+  }
+}
+
 // Generate a magic-link sign-in URL for the given email, server-side
 // (uses Supabase admin API). Doesn't email — returns the URL so the
 // dashboard can show it for the owner to copy and share via SMS, etc.

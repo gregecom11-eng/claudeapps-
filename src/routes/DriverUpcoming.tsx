@@ -12,7 +12,7 @@ import type { Ride, Vehicle } from "../lib/types";
 // by day. Read-only — actionable buttons (On my way / Arrived /
 // Completed) live on Today. Drivers come here to plan ahead.
 
-type FilterKey = "all" | "airport" | "notes";
+type FilterKey = "all" | "airport" | "this_week" | "no_vehicle";
 
 export function DriverUpcoming() {
   const [rides, setRides] = useState<Ride[] | null>(null);
@@ -65,24 +65,33 @@ export function DriverUpcoming() {
     [vehicles],
   );
 
+  const weekEnd = useMemo(() => endOfThisWeekLA(), []);
+
   const counts = useMemo(() => {
     const all = rides ?? [];
     return {
       all: all.length,
       airport: all.filter(rideIsAirport).length,
-      notes: all.filter((r) => (r.notes ?? "").trim().length > 0).length,
+      this_week: all.filter((r) => new Date(r.pickup_at) <= weekEnd).length,
+      no_vehicle: all.filter((r) => !r.vehicle_id).length,
     };
-  }, [rides]);
+  }, [rides, weekEnd]);
 
   const filtered = useMemo(() => {
     const all = rides ?? [];
     if (filter === "airport") return all.filter(rideIsAirport);
-    if (filter === "notes")
-      return all.filter((r) => (r.notes ?? "").trim().length > 0);
+    if (filter === "this_week")
+      return all.filter((r) => new Date(r.pickup_at) <= weekEnd);
+    if (filter === "no_vehicle") return all.filter((r) => !r.vehicle_id);
     return all;
-  }, [rides, filter]);
+  }, [rides, filter, weekEnd]);
 
   const grouped = useMemo(() => groupByLADay(filtered), [filtered]);
+
+  const weekRides = useMemo(
+    () => (rides ?? []).filter((r) => new Date(r.pickup_at) <= weekEnd),
+    [rides, weekEnd],
+  );
 
   return (
     <div className="space-y-6">
@@ -94,16 +103,35 @@ export function DriverUpcoming() {
         >
           <Icon name="back" size={13} /> Today
         </Link>
-        <h1
-          className="mt-2"
-          style={{
-            fontSize: 24,
-            fontWeight: 600,
-            letterSpacing: "-0.02em",
-          }}
-        >
-          Upcoming rides
-        </h1>
+        <div className="mt-2 flex items-start justify-between gap-3">
+          <h1
+            style={{
+              fontSize: 24,
+              fontWeight: 600,
+              letterSpacing: "-0.02em",
+            }}
+          >
+            Upcoming rides
+          </h1>
+          {weekRides.length >= 2 ? (
+            <a
+              href={multiStopMapsUrl(weekRides)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-[10px] h-9 px-3 shrink-0"
+              style={{
+                fontSize: 12.5,
+                fontWeight: 600,
+                color: "var(--text)",
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
+              }}
+              title="Open every pickup this week as a single Google Maps route"
+            >
+              <Icon name="pin" size={13} /> Map week
+            </a>
+          ) : null}
+        </div>
         <p
           className="text-muted mt-1"
           style={{ fontSize: 13.5, lineHeight: 1.5 }}
@@ -210,8 +238,9 @@ function FilterPills({
 }) {
   const opts: { key: FilterKey; label: string }[] = [
     { key: "all", label: "All" },
+    { key: "this_week", label: "This week" },
     { key: "airport", label: "Airport" },
-    { key: "notes", label: "Has notes" },
+    { key: "no_vehicle", label: "No vehicle" },
   ];
   return (
     <div className="flex gap-2 overflow-x-auto" role="tablist">
@@ -450,6 +479,35 @@ function laOffsetFor(d: Date): string {
     .formatToParts(d)
     .find((p) => p.type === "timeZoneName")?.value;
   return part?.replace("GMT", "") || "+00:00";
+}
+
+// End of "this week" in LA — Sunday 23:59:59 (US default week ending).
+// Used both for the "This week" pill and the week-level map button.
+function endOfThisWeekLA(): Date {
+  const now = new Date();
+  const dayName = new Intl.DateTimeFormat("en-US", {
+    timeZone: BUSINESS_TZ,
+    weekday: "long",
+  }).format(now);
+  const idx: Record<string, number> = {
+    Sunday: 0,
+    Monday: 1,
+    Tuesday: 2,
+    Wednesday: 3,
+    Thursday: 4,
+    Friday: 5,
+    Saturday: 6,
+  };
+  const daysLeft = (7 - (idx[dayName] ?? 0)) % 7;
+  const target = new Date(now.getTime() + daysLeft * 24 * 60 * 60 * 1000);
+  const dayStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(target);
+  const off = laOffsetFor(now);
+  return new Date(`${dayStr}T23:59:59.999${off}`);
 }
 
 // "2026-05-09" in LA — used as a stable bucket key.

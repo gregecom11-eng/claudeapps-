@@ -25,6 +25,7 @@ export function PushToggle({ hint }: { hint?: string }) {
     try {
       await enablePush();
       setState("on");
+      window.dispatchEvent(new Event("sdl:pushstatechange"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to enable");
     } finally {
@@ -38,6 +39,7 @@ export function PushToggle({ hint }: { hint?: string }) {
     try {
       await disablePush();
       setState("off");
+      window.dispatchEvent(new Event("sdl:pushstatechange"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to disable");
     } finally {

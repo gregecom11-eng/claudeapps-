@@ -7,6 +7,8 @@ import {
   listRideExtras,
   listRides,
   listVehicles,
+  markDriverSeen,
+  updateMyDriverSelf,
   updateMyProfile,
   updateRideStatus,
 } from "../lib/api";
@@ -102,6 +104,10 @@ export function Driver() {
     const tomorrowWindow = laDayBoundsFor(
       new Date(Date.now() + 24 * 60 * 60 * 1000),
     );
+    // Heartbeat — bumps drivers.last_seen_at so the owner can see in
+    // Settings that the driver app is actively running. Soft-fails if
+    // the migration hasn't been applied yet.
+    void markDriverSeen();
     Promise.all([
       listRides(todayWindow),
       listRides({ ...tomorrowWindow, limit: 5 }),
@@ -1160,20 +1166,25 @@ function groupByBucket(rides: Ride[]) {
 
 /* ── Past + Profile sub-routes ─────────────────────────────────── */
 
+type PastFilter = "completed" | "cancelled";
+
 export function DriverPast() {
-  const [rides, setRides] = useState<Ride[]>([]);
+  const [rides, setRides] = useState<Ride[] | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<PastFilter>("completed");
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
-    Promise.all([listRides({ limit: 100 }), listVehicles()])
+    // Pull a generous window so the weekly card is meaningful.
+    Promise.all([listRides({ limit: 250 }), listVehicles()])
       .then(([r, v]) => {
         const past = r
           .filter(
             (x) =>
-              new Date(x.pickup_at).getTime() < Date.now() ||
               x.status === "completed" ||
-              x.status === "cancelled",
+              x.status === "cancelled" ||
+              new Date(x.pickup_at).getTime() < Date.now(),
           )
           .sort(
             (a, b) =>
@@ -1193,8 +1204,61 @@ export function DriverPast() {
     [vehicles],
   );
 
+  const counts = useMemo(() => {
+    const all = rides ?? [];
+    return {
+      completed: all.filter((r) => r.status === "completed").length,
+      cancelled: all.filter((r) => r.status === "cancelled").length,
+    };
+  }, [rides]);
+
+  const filtered = useMemo(() => {
+    const all = rides ?? [];
+    const byStatus = all.filter((r) =>
+      filter === "completed"
+        ? r.status === "completed"
+        : r.status === "cancelled",
+    );
+    const q = search.trim().toLowerCase();
+    if (!q) return byStatus;
+    return byStatus.filter((r) => {
+      const v = r.vehicle_id ? vMap.get(r.vehicle_id) : null;
+      const blob = [
+        r.passenger_name,
+        r.pickup_address,
+        r.dropoff_address ?? "",
+        r.flight_number ?? "",
+        r.flight_airline ?? "",
+        r.flight_airport ?? "",
+        v?.display_name ?? "",
+        v?.plate ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return blob.includes(q);
+    });
+  }, [rides, filter, search, vMap]);
+
+  const grouped = useMemo(() => groupByPastWeek(filtered), [filtered]);
+
+  // Earnings card always shows *this week*'s completed rides regardless
+  // of the active filter — it's a constant "how am I doing" pulse.
+  const thisWeekStats = useMemo(() => {
+    const all = rides ?? [];
+    const start = startOfThisWeekLA();
+    const wk = all.filter(
+      (r) =>
+        r.status === "completed" && new Date(r.pickup_at) >= start,
+    );
+    return {
+      count: wk.length,
+      fares: wk.reduce((s, r) => s + (r.fare_cents ?? 0), 0),
+      tips: wk.reduce((s, r) => s + (r.gratuity_cents ?? 0), 0),
+    };
+  }, [rides]);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="flex items-center gap-3">
         <Link
           to="/"
@@ -1209,40 +1273,293 @@ export function DriverPast() {
       >
         Past rides
       </h1>
-      {error ? (
-        <div className="text-danger text-sm">{error}</div>
-      ) : null}
-      {rides.length === 0 ? (
-        <div className="text-muted text-sm">Nothing yet.</div>
+
+      {error ? <div className="text-danger text-sm">{error}</div> : null}
+
+      <ThisWeekCard
+        rides={thisWeekStats.count}
+        fares={thisWeekStats.fares}
+        tips={thisWeekStats.tips}
+      />
+
+      <PastSearchAndFilter
+        search={search}
+        onSearch={setSearch}
+        filter={filter}
+        onFilter={setFilter}
+        counts={counts}
+      />
+
+      {rides === null ? (
+        <div className="text-muted text-sm">Loading…</div>
+      ) : filtered.length === 0 ? (
+        <div
+          className="surface rounded-[12px] p-5 text-center text-muted"
+          style={{ fontSize: 13.5 }}
+        >
+          {search.trim()
+            ? "No matches."
+            : filter === "cancelled"
+            ? "No cancelled rides on record."
+            : "No completed rides yet."}
+        </div>
       ) : (
-        <ul className="surface rounded-[12px] divide-y divide-border">
-          {rides.map((r) => {
-            const v = r.vehicle_id ? vMap.get(r.vehicle_id) : null;
-            return (
-              <li key={r.id} className="px-4 py-3 flex items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <div
-                    className="truncate"
-                    style={{ fontSize: 14, fontWeight: 600 }}
-                  >
-                    {r.passenger_name}
-                  </div>
-                  <div
-                    className="text-muted truncate tabular"
-                    style={{ fontSize: 12 }}
-                  >
-                    {fmtDate(r.pickup_at)} · {fmtTime(r.pickup_at)}
-                    {v ? ` · ${v.display_name}` : ""}
-                  </div>
-                </div>
-                <StatusBadge status={r.status} />
-              </li>
-            );
-          })}
-        </ul>
+        <div className="space-y-5">
+          {grouped.map(({ key, label, items }) => (
+            <section key={key}>
+              <div className="flex items-center gap-3 mb-2">
+                <h2
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  {label}
+                </h2>
+                <span
+                  className="text-muted tnum"
+                  style={{ fontSize: 11.5 }}
+                >
+                  {items.length} {items.length === 1 ? "ride" : "rides"}
+                </span>
+                <div
+                  className="flex-1 h-px"
+                  style={{ background: "var(--border)" }}
+                />
+              </div>
+              <ul className="surface rounded-[12px] divide-y divide-border">
+                {items.map((r) => {
+                  const v = r.vehicle_id ? vMap.get(r.vehicle_id) : null;
+                  return (
+                    <li
+                      key={r.id}
+                      className="px-4 py-3 flex items-center gap-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div
+                          className="truncate"
+                          style={{ fontSize: 14, fontWeight: 600 }}
+                        >
+                          {r.passenger_name}
+                        </div>
+                        <div
+                          className="text-muted truncate tabular"
+                          style={{ fontSize: 12 }}
+                        >
+                          {fmtDate(r.pickup_at)} · {fmtTime(r.pickup_at)}
+                          {v ? ` · ${v.display_name}` : ""}
+                        </div>
+                      </div>
+                      <StatusBadge status={r.status} />
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
+        </div>
       )}
     </div>
   );
+}
+
+function ThisWeekCard({
+  rides,
+  fares,
+  tips,
+}: {
+  rides: number;
+  fares: number;
+  tips: number;
+}) {
+  // Don't show the card if there's literally nothing to report — the
+  // "no completed rides" empty state covers that case.
+  if (rides === 0) return null;
+  return (
+    <div
+      className="surface rounded-[12px] p-4"
+      style={{ border: "1px solid var(--border)" }}
+    >
+      <div
+        className="text-muted"
+        style={{
+          fontSize: 11,
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+          fontWeight: 500,
+        }}
+      >
+        This week
+      </div>
+      <div
+        className="mt-2 grid"
+        style={{ gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}
+      >
+        <Stat label={rides === 1 ? "ride" : "rides"} value={String(rides)} />
+        <Stat label="fares" value={fmtMoney(fares)} />
+        <Stat label="tips" value={fmtMoney(tips)} />
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div
+        className="tnum"
+        style={{
+          fontSize: 20,
+          fontWeight: 600,
+          letterSpacing: "-0.02em",
+        }}
+      >
+        {value}
+      </div>
+      <div
+        className="text-muted"
+        style={{ fontSize: 11.5, marginTop: 1 }}
+      >
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function PastSearchAndFilter({
+  search,
+  onSearch,
+  filter,
+  onFilter,
+  counts,
+}: {
+  search: string;
+  onSearch: (s: string) => void;
+  filter: PastFilter;
+  onFilter: (f: PastFilter) => void;
+  counts: { completed: number; cancelled: number };
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="relative">
+        <span
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"
+          style={{ pointerEvents: "none" }}
+        >
+          <Icon name="search" size={14} />
+        </span>
+        <input
+          className="field field-prefixed"
+          placeholder="Search passenger, address, flight…"
+          value={search}
+          onChange={(e) => onSearch(e.target.value)}
+        />
+        {search ? (
+          <button
+            onClick={() => onSearch("")}
+            aria-label="Clear search"
+            className="absolute right-2 top-1/2 -translate-y-1/2 inline-grid place-items-center text-muted hover:text-text"
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+            }}
+          >
+            <Icon name="x" size={13} />
+          </button>
+        ) : null}
+      </div>
+      <div className="flex gap-2 overflow-x-auto" role="tablist">
+        {(["completed", "cancelled"] as const).map((k) => {
+          const active = filter === k;
+          const n = k === "completed" ? counts.completed : counts.cancelled;
+          return (
+            <button
+              key={k}
+              role="tab"
+              aria-selected={active}
+              onClick={() => onFilter(k)}
+              className="chip shrink-0"
+              style={{
+                cursor: "pointer",
+                background: active ? "var(--accent)" : "transparent",
+                color: active ? "#15161B" : "var(--text)",
+                borderColor: active ? "var(--accent-strong)" : "var(--border)",
+                fontWeight: active ? 600 : 500,
+              }}
+            >
+              {k === "completed" ? "Completed" : "Cancelled"}
+              <span
+                className="tnum"
+                style={{ fontSize: 11, opacity: 0.7 }}
+              >
+                {n}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── LA-time week helpers (Mon → Sun) ─────────────────────────── */
+function startOfThisWeekLA(): Date {
+  const now = new Date();
+  const dayName = new Intl.DateTimeFormat("en-US", {
+    timeZone: BUSINESS_TZ,
+    weekday: "long",
+  }).format(now);
+  const idx: Record<string, number> = {
+    Sunday: 6,
+    Monday: 0,
+    Tuesday: 1,
+    Wednesday: 2,
+    Thursday: 3,
+    Friday: 4,
+    Saturday: 5,
+  };
+  const daysSinceMonday = idx[dayName] ?? 0;
+  const target = new Date(
+    now.getTime() - daysSinceMonday * 24 * 60 * 60 * 1000,
+  );
+  const dayStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(target);
+  const off = laOffsetFor(now);
+  return new Date(`${dayStr}T00:00:00${off}`);
+}
+
+type WeekGroup = { key: string; label: string; items: Ride[] };
+
+function groupByPastWeek(rides: Ride[]): WeekGroup[] {
+  const thisStart = startOfThisWeekLA();
+  const lastStart = new Date(thisStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const out: { thisWk: Ride[]; lastWk: Ride[]; earlier: Ride[] } = {
+    thisWk: [],
+    lastWk: [],
+    earlier: [],
+  };
+  for (const r of rides) {
+    const t = new Date(r.pickup_at);
+    if (t >= thisStart) out.thisWk.push(r);
+    else if (t >= lastStart) out.lastWk.push(r);
+    else out.earlier.push(r);
+  }
+  const groups: WeekGroup[] = [];
+  if (out.thisWk.length)
+    groups.push({ key: "this", label: "This week", items: out.thisWk });
+  if (out.lastWk.length)
+    groups.push({ key: "last", label: "Last week", items: out.lastWk });
+  if (out.earlier.length)
+    groups.push({ key: "earlier", label: "Earlier", items: out.earlier });
+  return groups;
 }
 
 export function DriverProfile() {
@@ -1251,11 +1568,37 @@ export function DriverProfile() {
   const [phone, setPhone] = useState(profile?.phone ?? "");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [driver, setDriver] = useState<DriverType | null>(null);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [available, setAvailable] = useState<boolean>(true);
+  const [defaultVehicleId, setDefaultVehicleId] = useState<string | null>(
+    null,
+  );
+  const [savingDriver, setSavingDriver] = useState(false);
 
   useEffect(() => {
     setName(profile?.full_name ?? "");
     setPhone(profile?.phone ?? "");
   }, [profile?.full_name, profile?.phone]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([claimDriverByEmail(), listVehicles()])
+      .then(([d, v]) => {
+        if (cancelled) return;
+        setDriver(d);
+        setVehicles(v);
+        setAvailable(d?.available ?? true);
+        setDefaultVehicleId(d?.default_vehicle_id ?? null);
+      })
+      .catch(() => {
+        /* migration may not be applied; the controls still render but
+           save attempts will surface an error */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const save = async () => {
     setSaving(true);
@@ -1274,6 +1617,41 @@ export function DriverProfile() {
     }
   };
 
+  const flash = (m: string) => {
+    setMsg(m);
+    window.setTimeout(() => setMsg(null), 2000);
+  };
+
+  const toggleAvailability = async (next: boolean) => {
+    setAvailable(next); // optimistic
+    setSavingDriver(true);
+    try {
+      const updated = await updateMyDriverSelf({ available: next });
+      if (updated) setDriver(updated);
+      flash(next ? "Back on duty" : "Off duty — dispatch will see");
+    } catch (e) {
+      setAvailable(!next);
+      flash(e instanceof Error ? e.message : "Couldn't save");
+    } finally {
+      setSavingDriver(false);
+    }
+  };
+
+  const setVehicleDefault = async (next: string | null) => {
+    setDefaultVehicleId(next); // optimistic
+    setSavingDriver(true);
+    try {
+      const updated = await updateMyDriverSelf({ default_vehicle_id: next });
+      if (updated) setDriver(updated);
+      flash("Default vehicle saved");
+    } catch (e) {
+      setDefaultVehicleId(driver?.default_vehicle_id ?? null);
+      flash(e instanceof Error ? e.message : "Couldn't save");
+    } finally {
+      setSavingDriver(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-3">
@@ -1288,7 +1666,7 @@ export function DriverProfile() {
 
       <div className="flex items-center gap-4">
         <Avatar name={name || "?"} size={56} />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1
             style={{
               fontSize: 22,
@@ -1305,7 +1683,14 @@ export function DriverProfile() {
             {session?.user?.email}
           </div>
         </div>
+        <DutyChip available={available} />
       </div>
+
+      <DutyCard
+        available={available}
+        saving={savingDriver}
+        onToggle={toggleAvailability}
+      />
 
       <div className="surface rounded-[12px] p-5 space-y-4">
         <Field label="Full name">
@@ -1326,6 +1711,28 @@ export function DriverProfile() {
             onChange={(e) => setPhone(e.target.value)}
             placeholder="+1 (___) ___-____"
           />
+        </Field>
+        <Field
+          label="Default vehicle"
+          hint="Dispatch sees this preference when assigning your rides."
+          optional
+        >
+          <select
+            className="field"
+            value={defaultVehicleId ?? ""}
+            onChange={(e) =>
+              setVehicleDefault(e.target.value === "" ? null : e.target.value)
+            }
+            disabled={savingDriver || vehicles.length === 0}
+          >
+            <option value="">No preference</option>
+            {vehicles.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.display_name}
+                {v.plate ? ` · ${v.plate}` : ""}
+              </option>
+            ))}
+          </select>
         </Field>
         <div className="flex items-center justify-between gap-3">
           {msg ? (
@@ -1420,6 +1827,109 @@ function Field({
       </label>
       {children}
       {hint ? <div className="help">{hint}</div> : null}
+    </div>
+  );
+}
+
+/* ── Duty card + chip ──────────────────────────────────────────── */
+function DutyChip({ available }: { available: boolean }) {
+  const color = available ? "var(--success)" : "var(--text-muted)";
+  return (
+    <span
+      className="chip tnum shrink-0"
+      style={{ color, background: "transparent" }}
+      title={available ? "Available for new rides" : "Off duty"}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 999,
+          background: color,
+          display: "inline-block",
+        }}
+      />
+      {available ? "On duty" : "Off duty"}
+    </span>
+  );
+}
+
+function DutyCard({
+  available,
+  saving,
+  onToggle,
+}: {
+  available: boolean;
+  saving: boolean;
+  onToggle: (v: boolean) => void;
+}) {
+  return (
+    <div
+      className="surface rounded-[12px] p-4 flex items-center gap-3"
+      style={{ border: "1px solid var(--border)" }}
+    >
+      <span
+        className="inline-grid place-items-center"
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 8,
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          color: available ? "var(--success)" : "var(--text-muted)",
+          flexShrink: 0,
+        }}
+      >
+        <Icon name={available ? "check" : "moon"} size={16} />
+      </span>
+      <div className="flex-1 min-w-0">
+        <div style={{ fontSize: 14, fontWeight: 600 }}>
+          {available ? "Available for new rides" : "Off duty"}
+        </div>
+        <div
+          className="text-muted"
+          style={{ fontSize: 12, lineHeight: 1.5 }}
+        >
+          {available
+            ? "Dispatch can assign new rides to you. Flip this off if you're sick, your vehicle is in the shop, or you're done for the day."
+            : "Dispatch can see you're off duty and won't assign you new rides. Existing rides stay on your schedule."}
+        </div>
+      </div>
+      <button
+        role="switch"
+        aria-checked={available}
+        disabled={saving}
+        onClick={() => onToggle(!available)}
+        className="relative shrink-0"
+        style={{
+          width: 40,
+          height: 24,
+          borderRadius: 999,
+          background: available ? "var(--success)" : "var(--surface-2)",
+          border: `1px solid ${
+            available
+              ? "color-mix(in oklab, var(--success) 60%, var(--border))"
+              : "var(--border)"
+          }`,
+          opacity: saving ? 0.6 : 1,
+          cursor: saving ? "wait" : "pointer",
+          transition: "background 120ms ease, border-color 120ms ease",
+        }}
+        title={available ? "Tap to go off duty" : "Tap to go on duty"}
+      >
+        <span
+          style={{
+            position: "absolute",
+            top: 2,
+            left: available ? 18 : 2,
+            width: 18,
+            height: 18,
+            borderRadius: 999,
+            background: available ? "#15161B" : "var(--text-muted)",
+            transition: "left 140ms ease",
+          }}
+        />
+      </button>
     </div>
   );
 }
