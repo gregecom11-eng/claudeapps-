@@ -656,3 +656,55 @@ export async function listEvents(limit = 30): Promise<ActivityEvent[]> {
   if (error) throw error;
   return data ?? [];
 }
+
+// Status-change events for a single ride. Used by the driver sheet to
+// stamp "Arrived 11:12 AM" alongside the progress strip.
+export async function listRideEvents(
+  rideId: string,
+): Promise<ActivityEvent[]> {
+  const { data, error } = await supabase
+    .from("events")
+    .select("*")
+    .eq("ride_id", rideId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+// Past rides for the same passenger (matched by name OR client_id).
+// Used by the "passenger history" card on the driver ride sheet.
+export async function listPassengerHistory(
+  ride: Ride,
+): Promise<Ride[]> {
+  let q = supabase
+    .from("rides")
+    .select("*")
+    .eq("status", "completed")
+    .neq("id", ride.id)
+    .order("pickup_at", { ascending: false })
+    .limit(20);
+  if (ride.client_id) {
+    q = q.eq("client_id", ride.client_id);
+  } else {
+    q = q.eq("passenger_name", ride.passenger_name);
+  }
+  const { data, error } = await q;
+  if (error) throw error;
+  return data ?? [];
+}
+
+// ── Driver post-trip notes ────────────────────────────────────────
+// Driver can annotate a ride after the fact ("address is around the
+// back", "passenger asked for water"). Distinct from the dispatch
+// `notes` field. Goes through a security-definer RPC because drivers
+// can only update `status` directly under RLS.
+export async function setDriverNotes(
+  rideId: string,
+  notes: string | null,
+): Promise<void> {
+  const { error } = await supabase.rpc("set_driver_notes", {
+    p_ride_id: rideId,
+    p_notes: notes,
+  });
+  if (error) throw error;
+}

@@ -88,3 +88,35 @@ end;
 $$;
 
 grant execute on function public.mark_driver_seen() to authenticated;
+
+-- ── Driver post-trip notes ────────────────────────────────────────
+-- Drivers want a place to leave notes for next time ("address is around
+-- the back", "passenger prefers cold water"). Separate from the dispatch
+-- `notes` column so dispatch's instructions don't get overwritten.
+alter table public.rides
+  add column if not exists driver_notes text;
+
+-- Drivers can only update `status` directly under RLS — for any other
+-- field we go through a security-definer RPC that re-checks ownership.
+create or replace function public.set_driver_notes(
+  p_ride_id uuid,
+  p_notes text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.rides
+    set driver_notes = p_notes
+    where id = p_ride_id
+      and driver_id = public.current_driver_id();
+  if not found then
+    raise exception 'ride not found or not assigned to current driver';
+  end if;
+end;
+$$;
+
+grant execute on function public.set_driver_notes(uuid, text)
+  to authenticated;

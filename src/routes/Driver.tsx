@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   addRideExtra,
   claimDriverByEmail,
   getOrgSettings,
+  listPassengerHistory,
+  listRideEvents,
   listRideExtras,
   listRides,
   listVehicles,
   markDriverSeen,
+  setDriverNotes,
   updateMyDriverSelf,
   updateMyProfile,
   updateRideStatus,
@@ -26,6 +29,7 @@ import { PushToggle } from "../components/PushToggle";
 import { RideRowSkeleton } from "../components/Skeleton";
 import { StatusBadge } from "../components/StatusBadge";
 import type {
+  ActivityEvent,
   Driver as DriverType,
   Ride,
   RideExtra,
@@ -302,7 +306,12 @@ export function Driver() {
               ? vehiclesById.get(activeRide.vehicle_id) ?? null
               : null
           }
+          nextRide={pickNextRide(today ?? [], activeRide)}
           onClose={() => setActiveRide(null)}
+          onJumpToNext={() => {
+            const next = pickNextRide(today ?? [], activeRide);
+            if (next) setActiveRide(next);
+          }}
           onChange={async (updates) => {
             // Status change
             if (updates.status) {
@@ -311,6 +320,14 @@ export function Driver() {
                   activeRide.id,
                   updates.status,
                 );
+                // Tiny haptic confirmation when the device supports it.
+                // No-op on desktop / iOS — purely a "your tap registered"
+                // signal for drivers wearing gloves or in noisy cars.
+                try {
+                  navigator.vibrate?.(15);
+                } catch {
+                  /* not supported */
+                }
                 setActiveRide(updated);
                 reload();
               } catch (e) {
@@ -322,6 +339,25 @@ export function Driver() {
       ) : null}
     </div>
   );
+}
+
+// Pick the next un-finished ride after the given one (sorted by pickup
+// time). Returns null when this is already the last of the day.
+function pickNextRide(today: Ride[], current: Ride): Ride | null {
+  const sorted = today
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(a.pickup_at).getTime() - new Date(b.pickup_at).getTime(),
+    );
+  const after = sorted.filter(
+    (r) =>
+      r.id !== current.id &&
+      r.status !== "completed" &&
+      r.status !== "cancelled" &&
+      new Date(r.pickup_at).getTime() >= new Date(current.pickup_at).getTime(),
+  );
+  return after[0] ?? null;
 }
 
 function NotLinkedNotice({
@@ -439,19 +475,37 @@ function RideSheet({
   ride,
   driver,
   vehicle,
+  nextRide,
   onClose,
   onChange,
+  onJumpToNext,
 }: {
   ride: Ride;
   driver: DriverType;
   vehicle: Vehicle | null;
+  nextRide: Ride | null;
   onClose: () => void;
   onChange: (updates: { status?: RideStatus }) => void;
+  onJumpToNext: () => void;
 }) {
   const [tab, setTab] = useState<SheetTab>("briefing");
   const [extras, setExtras] = useState<RideExtra[]>([]);
   const [extrasErr, setExtrasErr] = useState<string | null>(null);
   const [dispatchPhone, setDispatchPhone] = useState<string | null>(null);
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [history, setHistory] = useState<Ride[]>([]);
+  const [draftDriverNotes, setDraftDriverNotes] = useState<string>(
+    ride.driver_notes ?? "",
+  );
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesMsg, setNotesMsg] = useState<string | null>(null);
+  const [copyAllOk, setCopyAllOk] = useState(false);
+
+  // Swipe-to-dismiss state. Only engages on touchscreens — refs avoid
+  // re-renders mid-drag.
+  const startY = useRef<number | null>(null);
+  const dragY = useRef<number>(0);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     getOrgSettings()
@@ -465,7 +519,10 @@ function RideSheet({
       .catch((e) =>
         setExtrasErr(e instanceof Error ? e.message : "Failed to load extras"),
       );
-  }, [ride.id]);
+    listRideEvents(ride.id).then(setEvents).catch(() => {});
+    listPassengerHistory(ride).then(setHistory).catch(() => setHistory([]));
+    setDraftDriverNotes(ride.driver_notes ?? "");
+  }, [ride.id, ride.driver_notes, ride]);
 
   const reloadExtras = () =>
     listRideExtras(ride.id).then(setExtras).catch(() => {});
@@ -475,6 +532,88 @@ function RideSheet({
   const mapsUrl = (addr: string) =>
     `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}`;
 
+  // Map status → most-recent event timestamp from the activity log.
+  const stamps = useMemo(() => {
+    const m: Partial<Record<RideStatus, string>> = {};
+    for (const e of events) {
+      const meta = (e.metadata ?? {}) as { to?: RideStatus; status?: RideStatus };
+      const to = meta.to ?? meta.status;
+      if (to) m[to] = e.created_at;
+    }
+    return m;
+  }, [events]);
+
+  const copyAll = async () => {
+    const lines = [
+      `Pickup: ${ride.pickup_address}`,
+      ride.dropoff_address ? `Dropoff: ${ride.dropoff_address}` : null,
+      ride.passenger_name ? `Passenger: ${ride.passenger_name}` : null,
+      ride.passenger_phone ? `Phone: ${ride.passenger_phone}` : null,
+      `Pickup time: ${fmtDate(ride.pickup_at)} ${fmtTime(ride.pickup_at)} PT`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    try {
+      if (navigator.share) {
+        await navigator.share({ text: lines, title: ride.passenger_name });
+        return;
+      }
+      await navigator.clipboard.writeText(lines);
+      setCopyAllOk(true);
+      window.setTimeout(() => setCopyAllOk(false), 1600);
+    } catch {
+      /* user cancelled share — no-op */
+    }
+  };
+
+  const saveDriverNotes = async () => {
+    setSavingNotes(true);
+    setNotesMsg(null);
+    try {
+      const v = draftDriverNotes.trim();
+      await setDriverNotes(ride.id, v.length === 0 ? null : v);
+      setNotesMsg("Saved");
+      window.setTimeout(() => setNotesMsg(null), 1600);
+    } catch (e) {
+      setNotesMsg(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
+  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    // Only engage swipe at the very top of the sheet — otherwise scrolling
+    // long content would be blocked.
+    if (sheetRef.current && sheetRef.current.scrollTop > 0) return;
+    startY.current = e.touches[0].clientY;
+  };
+  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (startY.current === null) return;
+    const dy = e.touches[0].clientY - startY.current;
+    if (dy <= 0) return; // upward swipe — let it scroll
+    dragY.current = dy;
+    if (sheetRef.current) {
+      sheetRef.current.style.transform = `translateY(${dy}px)`;
+      sheetRef.current.style.transition = "none";
+    }
+  };
+  const onTouchEnd = () => {
+    if (startY.current === null) return;
+    const dy = dragY.current;
+    if (sheetRef.current) {
+      sheetRef.current.style.transition = "transform 200ms ease";
+      if (dy > 120) {
+        // Far enough to dismiss.
+        sheetRef.current.style.transform = `translateY(100%)`;
+        window.setTimeout(onClose, 200);
+      } else {
+        sheetRef.current.style.transform = "translateY(0)";
+      }
+    }
+    startY.current = null;
+    dragY.current = 0;
+  };
+
   return (
     <div
       className="fixed inset-0 z-40 flex items-end md:items-center justify-center"
@@ -482,12 +621,32 @@ function RideSheet({
       onClick={onClose}
     >
       <div
+        ref={sheetRef}
         className="surface rounded-t-[16px] md:rounded-[16px] w-full md:max-w-[560px] max-h-[94vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
         style={{
           paddingBottom: "max(env(safe-area-inset-bottom), 16px)",
         }}
       >
+        {/* Drag handle (purely visual; the whole top region is draggable). */}
+        <div
+          aria-hidden
+          className="md:hidden flex justify-center pt-2 pb-1"
+          style={{ background: "var(--surface)" }}
+        >
+          <div
+            style={{
+              width: 36,
+              height: 4,
+              borderRadius: 999,
+              background: "var(--border)",
+            }}
+          />
+        </div>
+
         {/* Header */}
         <div
           className="px-5 pt-4 pb-3 flex items-start justify-between gap-3 sticky top-0"
@@ -530,8 +689,8 @@ function RideSheet({
           </button>
         </div>
 
-        {/* Status progress strip */}
-        <ProgressStrip status={ride.status} />
+        {/* Status progress strip with timestamps */}
+        <ProgressStrip status={ride.status} timestamps={stamps} />
 
         {/* Tabs */}
         <div
@@ -585,21 +744,36 @@ function RideSheet({
               </a>
             ) : null}
 
-            {dispatchPhone ? (
-              <a
-                href={`sms:${dispatchPhone}?body=${encodeURIComponent(
-                  `Re: ${ride.passenger_name} ride at ${fmtTime(ride.pickup_at)} — `,
-                )}`}
-                className="w-full inline-flex items-center justify-center gap-2 rounded-[10px] h-11 text-[14px] font-medium"
+            <div className="flex items-stretch gap-2">
+              {dispatchPhone ? (
+                <a
+                  href={`sms:${dispatchPhone}?body=${encodeURIComponent(
+                    `Re: ${ride.passenger_name} ride at ${fmtTime(ride.pickup_at)} — `,
+                  )}`}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-[10px] h-11 text-[14px] font-medium"
+                  style={{
+                    background: "transparent",
+                    color: "var(--text)",
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  <Icon name="phone" size={14} /> Message dispatch
+                </a>
+              ) : null}
+              <button
+                onClick={copyAll}
+                className="inline-flex items-center justify-center gap-2 rounded-[10px] h-11 px-3 text-[13.5px] font-medium"
                 style={{
                   background: "transparent",
-                  color: "var(--text)",
+                  color: copyAllOk ? "var(--success)" : "var(--text)",
                   border: "1px solid var(--border)",
                 }}
+                title="Copy or share pickup, dropoff, passenger, time"
               >
-                <Icon name="phone" size={14} /> Message dispatch
-              </a>
-            ) : null}
+                <Icon name={copyAllOk ? "check" : "copy"} size={14} />
+                {copyAllOk ? "Copied" : "Share trip"}
+              </button>
+            </div>
 
             <SheetRow icon="pin" label="Pickup">
               {ride.pickup_address}
@@ -658,12 +832,32 @@ function RideSheet({
               </SheetRow>
             ) : null}
 
+            {/* Passenger history (e.g. "5th ride · last Apr 12 · prefers Cadillac") */}
+            <PassengerHistoryCard ride={ride} history={history} />
+
+            {/* Wait-time helper (visible while at pickup or on the way) */}
+            <WaitTimer
+              rideId={ride.id}
+              status={ride.status}
+              onAdded={reloadExtras}
+            />
+
             {/* Extras section */}
             <ExtrasSection
               rideId={ride.id}
               extras={extras}
               error={extrasErr}
               onChanged={reloadExtras}
+            />
+
+            {/* Driver-side notes (post-trip handoff) */}
+            <DriverNotesCard
+              draft={draftDriverNotes}
+              onChange={setDraftDriverNotes}
+              onSave={saveDriverNotes}
+              saving={savingNotes}
+              msg={notesMsg}
+              dirty={(draftDriverNotes ?? "") !== (ride.driver_notes ?? "")}
             />
           </div>
         ) : (
@@ -677,32 +871,58 @@ function RideSheet({
 
         {/* Action bar */}
         <div
-          className="px-5 py-4 space-y-2 sticky bottom-0"
+          className="px-5 py-4 space-y-2 sticky bottom-0 no-print"
           style={{
             borderTop: "1px solid var(--border)",
             background: "var(--surface)",
           }}
         >
-          <ActionBar
-            status={ride.status}
-            onAdvance={(s) => onChange({ status: s })}
-          />
+          {ride.status === "completed" && nextRide ? (
+            <button
+              onClick={onJumpToNext}
+              className="w-full inline-flex items-center justify-between gap-2 rounded-[10px] h-12 px-4 text-[14px] font-semibold"
+              style={{
+                background: "var(--accent)",
+                color: "#15161B",
+                border: "1px solid var(--accent-strong)",
+              }}
+            >
+              <span className="truncate">
+                Next: {firstName(nextRide.passenger_name)} ·{" "}
+                {fmtTime(nextRide.pickup_at)}
+              </span>
+              <Icon name="arrow" size={16} />
+            </button>
+          ) : (
+            <ActionBar
+              status={ride.status}
+              onAdvance={(s) => onChange({ status: s })}
+            />
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function ProgressStrip({ status }: { status: RideStatus }) {
+function ProgressStrip({
+  status,
+  timestamps,
+}: {
+  status: RideStatus;
+  timestamps?: Partial<Record<RideStatus, string>>;
+}) {
   const STEPS: { key: RideStatus; label: string }[] = [
     { key: "scheduled", label: "Booked" },
-    { key: "on_the_way", label: "On the way" },
+    { key: "on_the_way", label: "Rolling" },
     { key: "arrived", label: "At pickup" },
     { key: "in_progress", label: "On board" },
     { key: "completed", label: "Done" },
   ];
   const currentIdx = STEPS.findIndex((s) => s.key === status);
   const idx = status === "cancelled" ? -1 : currentIdx;
+  const activeTime =
+    currentIdx >= 0 ? timestamps?.[STEPS[currentIdx].key] : null;
 
   return (
     <div className="px-5 py-3" style={{ background: "var(--surface-2)" }}>
@@ -730,14 +950,51 @@ function ProgressStrip({ status }: { status: RideStatus }) {
         })}
       </div>
       <div
-        className="mt-2 text-muted"
+        className="mt-1.5 grid"
+        style={{
+          gridTemplateColumns: `repeat(${STEPS.length}, 1fr)`,
+          gap: 6,
+        }}
+      >
+        {STEPS.map((s, i) => {
+          const done = idx > i;
+          const active = idx === i;
+          return (
+            <div
+              key={s.key}
+              className="tnum"
+              style={{
+                fontSize: 10.5,
+                letterSpacing: "0.02em",
+                textAlign: "center",
+                color: done || active ? "var(--text)" : "var(--text-muted)",
+                fontWeight: active ? 600 : 500,
+                lineHeight: 1.3,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+              title={s.label}
+            >
+              {s.label}
+            </div>
+          );
+        })}
+      </div>
+      <div
+        className="mt-2 text-muted flex items-center justify-between gap-3"
         style={{ fontSize: 11.5, letterSpacing: "0.02em" }}
       >
-        {status === "cancelled"
-          ? "Ride cancelled"
-          : currentIdx >= 0
-          ? STEPS[currentIdx].label
-          : "Pending"}
+        <span>
+          {status === "cancelled"
+            ? "Ride cancelled"
+            : currentIdx >= 0
+            ? STEPS[currentIdx].label
+            : "Pending"}
+        </span>
+        {activeTime ? (
+          <span className="tnum">{fmtTime(activeTime)}</span>
+        ) : null}
       </div>
     </div>
   );
@@ -767,12 +1024,14 @@ function ActionBar({
       </div>
     );
   }
+  // Action button label = the *next* status. Kept short so they don't
+  // wrap on small screens and read clearly when stressed.
   const labels: Record<RideStatus, string> = {
     requested: "",
     scheduled: "On my way",
-    on_the_way: "Arrived at pickup",
-    arrived: "Start trip — passenger on board",
-    in_progress: "Mark completed",
+    on_the_way: "I'm here",
+    arrived: "Passenger on board",
+    in_progress: "Trip complete",
     completed: "",
     cancelled: "",
   };
@@ -1016,6 +1275,322 @@ function ExtrasSection({
   );
 }
 
+/* ── Passenger history (Nth ride · last on …) ───────────────── */
+function PassengerHistoryCard({
+  ride,
+  history,
+}: {
+  ride: Ride;
+  history: Ride[];
+}) {
+  if (history.length === 0) return null;
+  const last = history[0];
+  const total = history.length + 1;
+  // Most-frequent vehicle in their past (by id, no display name lookup —
+  // we surface the count and let the briefing's vehicle row show the name).
+  const vehicleCounts = new Map<string, number>();
+  for (const r of history) {
+    if (r.vehicle_id)
+      vehicleCounts.set(
+        r.vehicle_id,
+        (vehicleCounts.get(r.vehicle_id) ?? 0) + 1,
+      );
+  }
+  const favoriteVehicle = ride.vehicle_id
+    ? null
+    : [...vehicleCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  void favoriteVehicle; // future: thread vehiclesById in here for a name
+  return (
+    <div
+      className="rounded-[10px] p-3 flex items-start gap-3"
+      style={{
+        background: "var(--surface-2)",
+        border: "1px solid var(--border)",
+      }}
+    >
+      <span
+        className="inline-grid place-items-center mt-0.5 text-accent shrink-0"
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 8,
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+        }}
+      >
+        <Icon name="user" size={13} />
+      </span>
+      <div className="flex-1 min-w-0">
+        <div style={{ fontSize: 13, fontWeight: 600 }}>
+          Ride #{total} with {firstName(ride.passenger_name)}
+        </div>
+        <div
+          className="text-muted"
+          style={{ fontSize: 12, lineHeight: 1.5, marginTop: 2 }}
+        >
+          Last completed {fmtDate(last.pickup_at)} · {fmtTime(last.pickup_at)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Wait-time helper (start a clock, stop and add to extras) ─── */
+function WaitTimer({
+  rideId,
+  status,
+  onAdded,
+}: {
+  rideId: string;
+  status: RideStatus;
+  onAdded: () => void;
+}) {
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
+  const [confirming, setConfirming] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (startedAt === null) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [startedAt]);
+
+  // Only useful between "on the way" and "in progress" — once on board
+  // there's no waiting to bill.
+  if (
+    status !== "arrived" &&
+    status !== "on_the_way" &&
+    status !== "scheduled"
+  )
+    return null;
+
+  const elapsedMs = startedAt ? now - startedAt : 0;
+  const elapsedMin = Math.max(1, Math.round(elapsedMs / 60_000));
+  const mm = Math.floor(elapsedMs / 60_000);
+  const ss = Math.floor((elapsedMs % 60_000) / 1000);
+
+  const start = () => {
+    setStartedAt(Date.now());
+    setErr(null);
+  };
+  const cancel = () => {
+    setStartedAt(null);
+    setConfirming(false);
+    setAmount("");
+  };
+  const stopAndConfirm = () => {
+    setConfirming(true);
+  };
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    try {
+      const cents = Math.round(parseFloat(amount || "0") * 100) || 0;
+      await addRideExtra(
+        rideId,
+        `Wait time · ${elapsedMin} min`,
+        cents,
+      );
+      cancel();
+      onAdded();
+    } catch (e2) {
+      setErr(e2 instanceof Error ? e2.message : "Couldn't save");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="rounded-[10px] p-3"
+      style={{
+        background: "var(--surface-2)",
+        border: "1px solid var(--border)",
+      }}
+    >
+      <div className="flex items-center gap-3">
+        <span
+          className="inline-grid place-items-center text-accent shrink-0"
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+          }}
+        >
+          <Icon name="clock" size={13} />
+        </span>
+        <div className="flex-1 min-w-0">
+          <div style={{ fontSize: 13, fontWeight: 600 }}>
+            {startedAt ? "Wait time running" : "Wait time"}
+          </div>
+          <div
+            className="text-muted tnum"
+            style={{ fontSize: 12, marginTop: 2 }}
+          >
+            {startedAt
+              ? `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`
+              : "Tap start when you arrive at pickup and the clock is on you."}
+          </div>
+        </div>
+        {!startedAt ? (
+          <button
+            onClick={start}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[8px] text-[12.5px] font-semibold"
+            style={{
+              background: "var(--accent)",
+              color: "#15161B",
+              border: "1px solid var(--accent-strong)",
+            }}
+          >
+            <Icon name="clock" size={12} /> Start
+          </button>
+        ) : (
+          <button
+            onClick={confirming ? cancel : stopAndConfirm}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[8px] text-[12.5px] font-medium"
+            style={{
+              background: "transparent",
+              color: "var(--text)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            {confirming ? "Cancel" : "Stop"}
+          </button>
+        )}
+      </div>
+
+      {confirming ? (
+        <form onSubmit={submit} className="mt-3 grid gap-2">
+          <div
+            className="text-muted"
+            style={{ fontSize: 12, lineHeight: 1.5 }}
+          >
+            Adds an extra "Wait time · {elapsedMin} min" line to the ride.
+          </div>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <span
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted tnum"
+                style={{ fontSize: 14, pointerEvents: "none" }}
+              >
+                $
+              </span>
+              <input
+                className="field tnum"
+                style={{ paddingLeft: 28 }}
+                inputMode="decimal"
+                placeholder="Amount"
+                value={amount}
+                onChange={(e) =>
+                  setAmount(e.target.value.replace(/[^0-9.]/g, ""))
+                }
+                autoFocus
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={busy}
+              className="inline-flex items-center justify-center gap-2 rounded-[8px] h-10 px-4 text-[13px] font-semibold disabled:opacity-50"
+              style={{
+                background: "var(--accent)",
+                color: "#15161B",
+                border: "1px solid var(--accent-strong)",
+              }}
+            >
+              {busy ? "Saving…" : "Save"}
+            </button>
+          </div>
+          {err ? (
+            <div className="text-danger" style={{ fontSize: 12 }}>
+              {err}
+            </div>
+          ) : null}
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+/* ── Driver-side notes (post-trip handoff) ──────────────────── */
+function DriverNotesCard({
+  draft,
+  onChange,
+  onSave,
+  saving,
+  msg,
+  dirty,
+}: {
+  draft: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  saving: boolean;
+  msg: string | null;
+  dirty: boolean;
+}) {
+  return (
+    <div
+      className="rounded-[10px] p-3"
+      style={{
+        background: "var(--surface-2)",
+        border: "1px solid var(--border)",
+      }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div
+          className="text-muted"
+          style={{
+            fontSize: 11,
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            fontWeight: 500,
+          }}
+        >
+          My notes for next time
+        </div>
+        {msg ? (
+          <span
+            className="text-success"
+            style={{ fontSize: 11.5, fontWeight: 500 }}
+          >
+            {msg}
+          </span>
+        ) : null}
+      </div>
+      <textarea
+        className="field"
+        placeholder="e.g. Address is around the back · prefers cold water · gate code 1234"
+        value={draft}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ minHeight: 70 }}
+      />
+      <div className="mt-2 flex justify-end">
+        <button
+          onClick={onSave}
+          disabled={saving || !dirty}
+          className="inline-flex items-center justify-center gap-2 h-9 px-3 rounded-[8px] text-[13px] font-medium disabled:opacity-50"
+          style={{
+            background: dirty ? "var(--accent)" : "transparent",
+            color: dirty ? "#15161B" : "var(--text-muted)",
+            border: `1px solid ${
+              dirty ? "var(--accent-strong)" : "var(--border)"
+            }`,
+            cursor: saving ? "wait" : "pointer",
+          }}
+        >
+          <Icon name="save" size={13} />
+          {saving ? "Saving…" : dirty ? "Save notes" : "Saved"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ── Waybill view (DOT-compliant slip for police stops) ──────── */
 function WaybillView({
   ride,
@@ -1076,14 +1651,14 @@ function WaybillView({
   return (
     <div className="p-5 space-y-3">
       <div
-        className="text-muted"
+        className="text-muted no-print"
         style={{ fontSize: 12, lineHeight: 1.5 }}
       >
         Show this to law enforcement if requested. It's a DOT-style trip
         ticket with no client billing details exposed.
       </div>
       <div
-        className="rounded-[8px] p-4 mono"
+        className="waybill-print rounded-[8px] p-4 mono"
         style={{
           background: "var(--surface-2)",
           border: "1px solid var(--border)",
@@ -1094,18 +1669,33 @@ function WaybillView({
       >
         {lines}
       </div>
-      <button
-        onClick={onCopy}
-        className="w-full inline-flex items-center justify-center gap-2 rounded-[10px] h-10 text-[13.5px] font-medium"
-        style={{
-          background: "transparent",
-          border: "1px solid var(--border)",
-          color: copied ? "var(--success)" : "var(--text)",
-        }}
-      >
-        <Icon name={copied ? "check" : "copy"} size={14} />
-        {copied ? "Copied" : "Copy waybill text"}
-      </button>
+      <div className="grid grid-cols-2 gap-2 no-print">
+        <button
+          onClick={onCopy}
+          className="inline-flex items-center justify-center gap-2 rounded-[10px] h-10 text-[13.5px] font-medium"
+          style={{
+            background: "transparent",
+            border: "1px solid var(--border)",
+            color: copied ? "var(--success)" : "var(--text)",
+          }}
+        >
+          <Icon name={copied ? "check" : "copy"} size={14} />
+          {copied ? "Copied" : "Copy text"}
+        </button>
+        <button
+          onClick={() => window.print()}
+          className="inline-flex items-center justify-center gap-2 rounded-[10px] h-10 text-[13.5px] font-medium"
+          style={{
+            background: "transparent",
+            border: "1px solid var(--border)",
+            color: "var(--text)",
+          }}
+          title="Open the system print dialog (paper or PDF)"
+        >
+          <Icon name="doc" size={14} />
+          Print
+        </button>
+      </div>
     </div>
   );
 }

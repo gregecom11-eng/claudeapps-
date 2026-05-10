@@ -108,6 +108,7 @@ export type Ride = {
   billing_terms: BillingTerms | null;
 
   notes: string | null;
+  driver_notes?: string | null;
 
   created_at: string;
   updated_at: string;
