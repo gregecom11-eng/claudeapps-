@@ -113,22 +113,44 @@ export function Client() {
         <NoRidesYet />
       )}
 
-      {/* Quick actions */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <QuickAction
-          to="/book"
-          icon="plus"
-          label="Book a ride"
-          hint="New reservation"
-          accent
-        />
-        <QuickAction
-          to="/trips"
-          icon="calendar"
-          label="All trips"
-          hint={`${upcoming.length} upcoming · ${past.length} past`}
-        />
-      </div>
+      {/* Book another ride — single subtle CTA. Trips/account live in
+          the bottom dock so we don't need to duplicate them here. */}
+      <Link
+        to="/book"
+        className="rounded-[12px] flex items-center justify-between gap-3 px-4 transition active:scale-[0.99]"
+        style={{
+          height: 56,
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+        }}
+      >
+        <span className="inline-flex items-center gap-3 min-w-0">
+          <span
+            className="inline-grid place-items-center shrink-0"
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 10,
+              background:
+                "color-mix(in oklab, var(--accent) 14%, var(--surface-2))",
+              color: "var(--accent)",
+              border: "1px solid color-mix(in oklab, var(--accent) 22%, var(--border))",
+            }}
+          >
+            <Icon name="plus" size={15} />
+          </span>
+          <span
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              letterSpacing: "-0.005em",
+            }}
+          >
+            {next ? "Book another ride" : "Book a ride"}
+          </span>
+        </span>
+        <Icon name="arrow" size={13} className="text-muted shrink-0" />
+      </Link>
 
       {/* Other upcoming */}
       {upcoming.length > 1 ? (
@@ -270,12 +292,15 @@ function NextRideHero({ ride }: { ride: Ride }) {
         >
           {fmtTime(ride.pickup_at)}
         </h2>
-        <p
-          className="text-muted mt-1"
-          style={{ fontSize: 14, letterSpacing: "0.01em" }}
-        >
-          {fmtDayInLA(ride.pickup_at)}
-        </p>
+        <div className="mt-1 flex items-baseline gap-2.5 flex-wrap">
+          <p
+            className="text-muted"
+            style={{ fontSize: 14, letterSpacing: "0.01em" }}
+          >
+            {fmtDayInLA(ride.pickup_at)}
+          </p>
+          <CountdownChip iso={ride.pickup_at} />
+        </div>
 
         <div
           className="mt-5 grid gap-2"
@@ -394,58 +419,6 @@ function NextRideHero({ ride }: { ride: Ride }) {
   );
 }
 
-function QuickAction({
-  to,
-  icon,
-  label,
-  hint,
-  accent,
-}: {
-  to: string;
-  icon: "plus" | "calendar";
-  label: string;
-  hint: string;
-  accent?: boolean;
-}) {
-  return (
-    <Link
-      to={to}
-      className="rounded-[12px] p-4 flex items-center gap-3 transition active:scale-[0.985]"
-      style={{
-        background: accent
-          ? "color-mix(in oklab, var(--accent) 12%, var(--surface))"
-          : "var(--surface)",
-        border: `1px solid ${
-          accent
-            ? "color-mix(in oklab, var(--accent) 35%, var(--border))"
-            : "var(--border)"
-        }`,
-      }}
-    >
-      <span
-        className="inline-grid place-items-center shrink-0"
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: 10,
-          background: accent ? "var(--accent)" : "var(--surface-2)",
-          color: accent ? "#15161B" : "var(--text)",
-          border: accent ? "none" : "1px solid var(--border)",
-        }}
-      >
-        <Icon name={icon} size={18} />
-      </span>
-      <div className="flex-1 min-w-0">
-        <div style={{ fontSize: 14, fontWeight: 600 }}>{label}</div>
-        <div className="text-muted" style={{ fontSize: 12 }}>
-          {hint}
-        </div>
-      </div>
-      <Icon name="arrow" size={14} className="text-muted shrink-0" />
-    </Link>
-  );
-}
-
 export function TripRow({ ride }: { ride: Ride }) {
   return (
     <Link
@@ -514,6 +487,44 @@ function SectionHeader({ title, to }: { title: string; to?: string }) {
         </Link>
       ) : null}
     </div>
+  );
+}
+
+function CountdownChip({ iso }: { iso: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const ms = new Date(iso).getTime() - now;
+  // Only show when pickup is within the next 24h and still in the future.
+  if (ms <= 0 || ms > 24 * 60 * 60 * 1000) return null;
+  const totalMin = Math.max(1, Math.round(ms / 60_000));
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  const label = h > 0 ? `${h}h ${m}m` : `${m}m`;
+  const close = ms <= 90 * 60 * 1000; // within 90 min → champagne
+  return (
+    <span
+      className="chip tabular"
+      style={{
+        background: close
+          ? "color-mix(in oklab, var(--accent) 14%, var(--surface))"
+          : "var(--surface-2)",
+        color: close ? "var(--accent)" : "var(--text-muted)",
+        border: `1px solid ${
+          close
+            ? "color-mix(in oklab, var(--accent) 30%, var(--border))"
+            : "var(--border)"
+        }`,
+        fontSize: 11.5,
+        fontWeight: 600,
+        letterSpacing: "0.01em",
+        padding: "3px 10px",
+      }}
+    >
+      Pickup in {label}
+    </span>
   );
 }
 

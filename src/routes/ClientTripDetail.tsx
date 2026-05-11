@@ -304,17 +304,21 @@ export function ClientTripDetail() {
         </div>
       </section>
 
-      {/* Flight */}
+      {/* Flight — opens a Google search for the flight number in a new
+          tab so riders can tap the chip to confirm status. */}
       {ride.flight_airline || ride.flight_number ? (
-        <section
-          className="rounded-[12px] p-4 flex items-center gap-3"
+        <a
+          href={buildFlightSearchUrl(ride.flight_airline, ride.flight_number)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-[12px] p-4 flex items-center gap-3 transition active:scale-[0.99]"
           style={{
             background: "var(--surface)",
             border: "1px solid var(--border)",
           }}
         >
           <span
-            className="inline-grid place-items-center"
+            className="inline-grid place-items-center shrink-0"
             style={{
               width: 36,
               height: 36,
@@ -335,7 +339,19 @@ export function ClientTripDetail() {
               ) : null}
             </div>
           </div>
-        </section>
+          <span
+            className="text-muted shrink-0 inline-flex items-center gap-1"
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              fontWeight: 500,
+            }}
+          >
+            Check
+            <Icon name="arrow" size={11} />
+          </span>
+        </a>
       ) : null}
 
       {/* Chauffeur card */}
@@ -494,41 +510,9 @@ export function ClientTripDetail() {
         </div>
       </section>
 
-      {/* Share + cancel */}
-      <div className="flex flex-wrap gap-2.5 pt-2">
+      {/* Share trip — kept visible since sharing is a positive action. */}
+      <div className="pt-2">
         <ShareButton ride={ride} />
-        {cancellable ? (
-          <button
-            onClick={async () => {
-              const ok = await confirm({
-                title: "Cancel this ride?",
-                body: "Sergio will be notified. You can rebook anytime.",
-                confirmLabel: "Cancel ride",
-                cancelLabel: "Keep it",
-                destructive: true,
-              });
-              if (!ok) return;
-              try {
-                await updateRideStatus(ride.id, "cancelled");
-                pushToast("success", "Ride cancelled.");
-                reload();
-              } catch (e) {
-                pushToast(
-                  "error",
-                  e instanceof Error ? e.message : "Couldn't cancel",
-                );
-              }
-            }}
-            className="inline-flex items-center gap-2 h-11 px-4 rounded-[10px] text-[14px] font-medium"
-            style={{
-              background: "transparent",
-              color: "var(--danger)",
-              border: "1px solid color-mix(in oklab, var(--danger) 35%, var(--border))",
-            }}
-          >
-            <Icon name="x" size={14} /> Cancel ride
-          </button>
-        ) : null}
       </div>
 
       {error ? (
@@ -544,6 +528,50 @@ export function ClientTripDetail() {
           <Icon name="back" size={13} /> All trips
         </Link>
       </div>
+
+      {/* Cancel is a destructive action — tucked at the very bottom in a
+          muted treatment so it's findable but hard to mis-tap. The
+          confirm dialog adds a second-tap safety net. */}
+      {cancellable ? (
+        <div
+          className="pt-10 mt-4"
+          style={{ borderTop: "1px solid var(--border)" }}
+        >
+          <button
+            onClick={async () => {
+              const ok = await confirm({
+                title: "Cancel this ride?",
+                body: "Sergio will be notified. You can rebook anytime.",
+                confirmLabel: "Yes, cancel ride",
+                cancelLabel: "Keep it",
+                destructive: true,
+              });
+              if (!ok) return;
+              try {
+                await updateRideStatus(ride.id, "cancelled");
+                pushToast("success", "Ride cancelled.");
+                reload();
+              } catch (e) {
+                pushToast(
+                  "error",
+                  e instanceof Error ? e.message : "Couldn't cancel",
+                );
+              }
+            }}
+            className="text-muted hover:text-text inline-flex items-center gap-1.5"
+            style={{
+              fontSize: 12.5,
+              letterSpacing: "0.01em",
+              textDecoration: "underline",
+              textUnderlineOffset: 3,
+              textDecorationColor:
+                "color-mix(in oklab, var(--text-muted) 50%, transparent)",
+            }}
+          >
+            Cancel this ride
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -658,6 +686,16 @@ function ShareButton({ ride }: { ride: Ride }) {
       <Icon name="copy" size={14} /> Share trip
     </button>
   );
+}
+
+function buildFlightSearchUrl(
+  airline: string | null,
+  number: string | null,
+): string {
+  const q = [airline, number].filter(Boolean).join(" ").trim() || "flight";
+  return `https://www.google.com/search?q=${encodeURIComponent(
+    `${q} flight status`,
+  )}`;
 }
 
 function buildStatusTimestamps(
