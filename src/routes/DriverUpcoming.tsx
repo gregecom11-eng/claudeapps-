@@ -94,33 +94,38 @@ export function DriverUpcoming() {
   );
 
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="space-y-7">
+      <div className="fade-up">
         <Link
           to="/"
-          className="inline-flex items-center gap-1.5 text-muted hover:text-text"
+          className="inline-flex items-center gap-1.5 text-muted hover:text-text transition"
           style={{ fontSize: 12.5 }}
         >
           <Icon name="back" size={13} /> Today
         </Link>
-        <div className="mt-2 flex items-start justify-between gap-3">
-          <h1
-            style={{
-              fontSize: 24,
-              fontWeight: 600,
-              letterSpacing: "-0.02em",
-            }}
-          >
-            Upcoming rides
-          </h1>
+        <div className="mt-3 flex items-start justify-between gap-3">
+          <div>
+            <div className="eyebrow">Schedule</div>
+            <h1
+              className="serif mt-1.5"
+              style={{
+                fontSize: 32,
+                fontWeight: 600,
+                letterSpacing: "-0.02em",
+                lineHeight: 1.05,
+              }}
+            >
+              Upcoming
+            </h1>
+          </div>
           {weekRides.length >= 2 ? (
             <a
               href={multiStopMapsUrl(weekRides)}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-[10px] h-9 px-3 shrink-0"
+              className="inline-flex items-center gap-1.5 rounded-[12px] h-11 px-4 shrink-0 transition active:scale-[0.97]"
               style={{
-                fontSize: 12.5,
+                fontSize: 13,
                 fontWeight: 600,
                 color: "var(--text)",
                 background: "var(--surface-2)",
@@ -133,64 +138,67 @@ export function DriverUpcoming() {
           ) : null}
         </div>
         <p
-          className="text-muted mt-1"
-          style={{ fontSize: 13.5, lineHeight: 1.5 }}
+          className="text-muted mt-2"
+          style={{ fontSize: 14, lineHeight: 1.55 }}
         >
           {rides === null
             ? "Loading…"
             : rides.length === 0
-            ? "Nothing scheduled. You'll see assigned rides here as they come in."
-            : `${rides.length} ${rides.length === 1 ? "ride" : "rides"} on the books across the next 30 days.`}
+            ? "Nothing scheduled. You'll see assigned rides here as dispatch books them in."
+            : `${rides.length} ${
+                rides.length === 1 ? "ride" : "rides"
+              } on the books across the next 30 days.`}
         </p>
       </div>
 
       {error ? (
-        <div className="surface rounded-[12px] p-4 text-danger text-sm">
+        <div
+          className="rounded-[14px] p-4 text-sm"
+          style={{
+            background: "color-mix(in oklab, var(--danger) 12%, var(--surface))",
+            border: "1px solid color-mix(in oklab, var(--danger) 28%, var(--border))",
+            color: "var(--danger)",
+          }}
+        >
           {error}
         </div>
       ) : null}
 
       {rides && rides.length > 0 ? (
-        <FilterPills
-          value={filter}
-          counts={counts}
-          onChange={setFilter}
-        />
+        <FilterPills value={filter} counts={counts} onChange={setFilter} />
       ) : null}
 
       {rides && rides.length > 0 && filtered.length === 0 ? (
         <div
-          className="surface rounded-[12px] p-5 text-center text-muted"
-          style={{ fontSize: 13.5 }}
+          className="surface rounded-[14px] p-6 text-center text-muted"
+          style={{ fontSize: 14 }}
         >
           No rides match this filter.
         </div>
       ) : null}
 
       {grouped.map(({ key, label, items }) => (
-        <section key={key}>
-          <div className="flex items-center gap-3 mb-3">
-            <Icon name="calendar" size={14} className="text-muted" />
-            <h2
+        <section key={key} className="fade-up">
+          <div className="flex items-center gap-3 mb-4">
+            <span
+              className="inline-grid place-items-center text-accent"
               style={{
-                fontSize: 13,
-                fontWeight: 600,
-                letterSpacing: "0.04em",
-                textTransform: "uppercase",
+                width: 26,
+                height: 26,
+                borderRadius: 8,
+                background: "var(--accent-soft)",
+                border: "1px solid color-mix(in oklab, var(--accent) 24%, var(--border))",
               }}
             >
+              <Icon name="calendar" size={13} />
+            </span>
+            <h2 className="eyebrow" style={{ fontSize: 11.5 }}>
               {label}
             </h2>
-            <span
-              className="text-muted tnum"
-              style={{ fontSize: 12 }}
-            >
+            <span className="text-muted tnum" style={{ fontSize: 12 }}>
               {items.length} {items.length === 1 ? "ride" : "rides"}
             </span>
-            <div
-              className="flex-1 h-px"
-              style={{ background: "var(--border)" }}
-            />
+            <div className="flex-1 hr-fine" />
             {items.length >= 2 ? (
               <a
                 href={multiStopMapsUrl(items)}
@@ -243,7 +251,7 @@ function FilterPills({
     { key: "no_vehicle", label: "No vehicle" },
   ];
   return (
-    <div className="flex gap-2 overflow-x-auto" role="tablist">
+    <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1" role="tablist">
       {opts.map((o) => {
         const active = value === o.key;
         const n = counts[o.key];
@@ -255,14 +263,24 @@ function FilterPills({
             aria-selected={active}
             disabled={disabled}
             onClick={() => onChange(o.key)}
-            className="chip shrink-0"
+            className="shrink-0 inline-flex items-center gap-2 transition active:scale-[0.97]"
             style={{
               cursor: disabled ? "default" : "pointer",
               opacity: disabled ? 0.4 : 1,
+              height: 38,
+              padding: "0 16px",
+              borderRadius: 999,
               background: active ? "var(--accent)" : "transparent",
               color: active ? "#15161B" : "var(--text)",
-              borderColor: active ? "var(--accent-strong)" : "var(--border)",
+              border: `1px solid ${
+                active ? "var(--accent-strong)" : "var(--border)"
+              }`,
               fontWeight: active ? 600 : 500,
+              fontSize: 13,
+              whiteSpace: "nowrap",
+              boxShadow: active
+                ? "0 4px 12px color-mix(in oklab, var(--accent) 30%, transparent)"
+                : "none",
             }}
           >
             {o.label}
@@ -270,7 +288,14 @@ function FilterPills({
               className="tnum"
               style={{
                 fontSize: 11,
-                opacity: 0.7,
+                fontWeight: 600,
+                opacity: 0.75,
+                padding: "1px 6px",
+                borderRadius: 999,
+                background: active
+                  ? "rgba(0,0,0,0.12)"
+                  : "var(--surface-2)",
+                lineHeight: 1.4,
               }}
             >
               {n}
@@ -298,37 +323,57 @@ function UpcomingRideCard({
     `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addr)}`;
 
   return (
-    <article className="surface rounded-[12px] overflow-hidden">
+    <article
+      className="rounded-[16px] overflow-hidden transition"
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        boxShadow: open ? "var(--shadow-md)" : "var(--shadow-sm)",
+      }}
+    >
       <button
         onClick={onToggle}
-        className="w-full text-left p-4"
+        className="w-full text-left p-5 transition active:scale-[0.998]"
         aria-expanded={open}
       >
-        <div className="flex items-center justify-between gap-3">
-          <div
-            className="tabular"
-            style={{
-              fontSize: 22,
-              fontWeight: 600,
-              letterSpacing: "-0.02em",
-            }}
-          >
-            {fmtTime(ride.pickup_at)}
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div
+              className="display-num"
+              style={{
+                fontSize: 30,
+                color: "var(--text)",
+              }}
+            >
+              {fmtTime(ride.pickup_at)}
+            </div>
+            <div
+              className="text-muted tnum"
+              style={{
+                fontSize: 11,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                fontWeight: 500,
+                marginTop: 4,
+              }}
+            >
+              pickup
+            </div>
           </div>
           <StatusBadge status={ride.status} />
         </div>
-        <div className="mt-2 flex items-center gap-3">
-          <Avatar name={ride.passenger_name} size={28} />
+        <div className="mt-4 flex items-center gap-3">
+          <Avatar name={ride.passenger_name} size={32} />
           <div className="min-w-0 flex-1">
             <div
               className="truncate"
-              style={{ fontSize: 14, fontWeight: 600 }}
+              style={{ fontSize: 14.5, fontWeight: 600 }}
             >
               {ride.passenger_name}
             </div>
             <div
               className="text-muted truncate"
-              style={{ fontSize: 12 }}
+              style={{ fontSize: 12.5, marginTop: 1, lineHeight: 1.4 }}
             >
               {ride.pickup_address}
               {ride.dropoff_address ? ` → ${ride.dropoff_address}` : ""}
@@ -339,7 +384,7 @@ function UpcomingRideCard({
             style={{
               display: "inline-flex",
               transform: open ? "rotate(90deg)" : "rotate(0)",
-              transition: "transform 180ms",
+              transition: "transform 200ms",
             }}
           >
             <Icon name="chev" size={14} />
