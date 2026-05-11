@@ -2,39 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Design tokens — owner / driver / staff palette
-   (mirrors dispatch-101 design system) */
+/* Design tokens — chauffeur palette inspired by Blacklane / luxury
+   ride brands: deep warm black, champagne accent, restrained whites. */
 :root[data-theme="dark"] {
-  --bg: #0B0B0F;
-  --surface: #14151B;
-  --surface-2: #1C1E27;
-  --border: #262833;
-  --text: #F2F2F4;
-  --text-muted: #8B8E9A;
+  --bg: #0A0A0D;
+  --bg-elev: #0E0E13;
+  --surface: #14141B;
+  --surface-2: #1B1C24;
+  --surface-3: #23242E;
+  --border: #262732;
+  --border-strong: #353644;
+  --text: #F1EEE7;
+  --text-muted: #8A8D99;
   --accent: #C8A97E;
   --accent-strong: #B0905F;
+  --accent-soft: rgba(200,169,126,0.10);
   --success: #62C28E;
   --warn: #E0B252;
   --danger: #E26F6F;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
-  --shadow-md: 0 8px 24px rgba(0,0,0,0.35);
-  --ring-soft: rgba(200,169,126,0.18);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.45);
+  --shadow-md: 0 8px 28px rgba(0,0,0,0.42);
+  --shadow-lg: 0 24px 60px rgba(0,0,0,0.55);
+  --ring-soft: rgba(200,169,126,0.20);
 }
 :root[data-theme="light"] {
-  --bg: #FAFAF7;
+  --bg: #FAF8F2;
+  --bg-elev: #FFFFFF;
   --surface: #FFFFFF;
-  --surface-2: #F4F3EE;
+  --surface-2: #F3F1E8;
+  --surface-3: #EAE7DC;
   --border: #E6E4DD;
+  --border-strong: #D2CFC4;
   --text: #15161B;
   --text-muted: #6B6E78;
   --accent: #8B6E3C;
   --accent-strong: #6E5829;
+  --accent-soft: rgba(139,110,60,0.10);
   --success: #2E8757;
   --warn: #A07320;
   --danger: #B84B4B;
-  --shadow-sm: 0 1px 2px rgba(20,20,25,0.05);
-  --shadow-md: 0 8px 24px rgba(20,20,25,0.06);
-  --ring-soft: rgba(139,110,60,0.14);
+  --shadow-sm: 0 1px 2px rgba(20,20,25,0.06);
+  --shadow-md: 0 10px 28px rgba(20,20,25,0.08);
+  --shadow-lg: 0 24px 60px rgba(20,20,25,0.12);
+  --ring-soft: rgba(139,110,60,0.18);
 }
 
 html, body, #root { height: 100%; }
@@ -43,25 +53,67 @@ body {
   font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* ── Helper classes used by the design components ─────────────────── */
+/* ── Typographic atoms ─────────────────────────────────────────────── */
 .tnum         { font-variant-numeric: tabular-nums; }
+.tabular      { font-variant-numeric: tabular-nums; }
 .serif        { font-family: 'Cormorant Garamond', 'Times New Roman', Georgia, serif; font-weight: 500; }
-.eyebrow      { font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 500; color: var(--text-muted); }
+/* Display number style: serif, ultra-tight, used for hero times and
+   earnings totals to give the chauffeur-grade feel. */
+.display-num {
+  font-family: 'Cormorant Garamond', 'Times New Roman', Georgia, serif;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ── Surfaces & dividers ───────────────────────────────────────────── */
 .surface      { background: var(--surface); border: 1px solid var(--border); }
 .surface-2    { background: var(--surface-2); border: 1px solid var(--border); }
+.surface-elev {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+}
 .hairline     { border-color: var(--border); }
+.hr-fine      { height: 1px; background: var(--border); }
 .text-muted   { color: var(--text-muted); }
 .text-accent  { color: var(--accent); }
 .text-success { color: var(--success); }
 .text-danger  { color: var(--danger); }
 .bg-accent          { background: var(--accent); }
 .bg-accent-strong   { background: var(--accent-strong); }
+.bg-accent-soft     { background: var(--accent-soft); }
 .shadow-card  { box-shadow: var(--shadow-sm); }
 .shadow-pop   { box-shadow: var(--shadow-md); }
+.shadow-lift  { box-shadow: var(--shadow-lg); }
 
-/* Dotted vertical timeline rail (used in some designs) */
+/* Hero card: warm radial wash so the primary cards feel premium. */
+.hero-wash {
+  background:
+    radial-gradient(120% 90% at 100% 0%, color-mix(in oklab, var(--accent) 16%, transparent), transparent 60%),
+    radial-gradient(80% 100% at 0% 100%, color-mix(in oklab, var(--accent) 6%, transparent), transparent 55%),
+    var(--surface);
+  border: 1px solid color-mix(in oklab, var(--accent) 32%, var(--border));
+}
+
+/* Inset surface on top of dark surfaces for stat blocks. */
+.inset {
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+/* Dotted vertical timeline rail */
 .rail {
   background-image: linear-gradient(to bottom, var(--border) 0 4px, transparent 4px 8px);
   background-size: 1px 8px;
@@ -69,7 +121,7 @@ body {
   background-position: center top;
 }
 
-/* Heartbeat live-dot pulse */
+/* ── Motion ───────────────────────────────────────────────────────── */
 @keyframes pulseDot {
   0%   { box-shadow: 0 0 0 0 rgba(98,194,142,0.55); }
   70%  { box-shadow: 0 0 0 8px rgba(98,194,142,0); }
@@ -77,14 +129,18 @@ body {
 }
 .pulse-dot { animation: pulseDot 2.4s ease-out infinite; }
 
-/* Pop-in for "Copied" confirmation */
 @keyframes pop {
   0%   { transform: scale(0.96); opacity: 0; }
   100% { transform: scale(1); opacity: 1; }
 }
 .pop-in { animation: pop 160ms ease-out both; }
 
-/* Loading skeleton shimmer */
+@keyframes fadeUp {
+  0%   { transform: translateY(6px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.fade-up { animation: fadeUp 260ms cubic-bezier(.2,.7,.2,1) both; }
+
 @keyframes shimmer {
   0%   { background-position: -200px 0; }
   100% { background-position: calc(200px + 100%) 0; }
@@ -101,31 +157,32 @@ body {
   animation: shimmer 1.4s infinite linear;
 }
 
-/* Chip/badge base */
+/* ── Chip / badge ─────────────────────────────────────────────────── */
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
-  border-radius: 999px; padding: 2px 10px;
+  border-radius: 999px; padding: 3px 12px;
   font-size: 12px; font-weight: 500; line-height: 18px;
   border: 1px solid var(--border);
+  white-space: nowrap;
 }
 
-/* Form atoms */
+/* ── Form atoms ───────────────────────────────────────────────────── */
 .label {
-  display: block; font-size: 12px; font-weight: 500;
-  letter-spacing: 0.04em; text-transform: uppercase;
-  color: var(--text-muted); margin-bottom: 6px;
+  display: block; font-size: 11.5px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 8px;
 }
 .field {
   width: 100%;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0 12px;
-  height: 42px;
-  font-size: 15px;
+  border-radius: 10px;
+  padding: 0 14px;
+  height: 48px;
+  font-size: 15.5px;
   line-height: 1.4;
-  transition: border-color 120ms, box-shadow 120ms, background 120ms;
+  transition: border-color 140ms, box-shadow 140ms, background 140ms;
   appearance: none;
   -webkit-appearance: none;
 }
@@ -133,21 +190,21 @@ body {
 .field::placeholder { color: var(--text-muted); }
 .field:hover { border-color: color-mix(in oklab, var(--text-muted) 35%, var(--border)); }
 .field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--ring-soft); }
-.field-prefixed { padding-left: 38px; }
-textarea.field { padding: 10px 12px; height: auto; min-height: 88px; resize: vertical; line-height: 1.5; }
+.field-prefixed { padding-left: 42px; }
+textarea.field { padding: 12px 14px; height: auto; min-height: 96px; resize: vertical; line-height: 1.55; }
 select.field {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238B8E9A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
   background-repeat: no-repeat;
-  background-position: right 12px center;
-  padding-right: 36px;
+  background-position: right 14px center;
+  padding-right: 38px;
 }
-.help { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
+.help { color: var(--text-muted); font-size: 12.5px; margin-top: 8px; line-height: 1.5; }
 
-/* Section card (header + body) */
+/* Section card */
 .section-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
 }
 
 /* Segmented control */
@@ -156,12 +213,12 @@ select.field {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 3px;
+  padding: 4px;
   width: 100%;
 }
 .seg button {
-  flex: 1; height: 32px; border-radius: 999px;
-  font-size: 12.5px; font-weight: 500;
+  flex: 1; height: 36px; border-radius: 999px;
+  font-size: 13px; font-weight: 500;
   color: var(--text-muted);
   transition: background 120ms, color 120ms;
   white-space: nowrap;
@@ -184,8 +241,8 @@ select.field {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* Collapsible chevron */
-.chev { transition: transform 180ms ease; }
+/* Chevron */
+.chev { transition: transform 200ms ease; }
 .chev[data-open="true"] { transform: rotate(90deg); }
 
 /* Dropdown menu */
@@ -193,15 +250,15 @@ select.field {
   position: absolute; z-index: 40;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   box-shadow: var(--shadow-md);
   overflow: hidden;
 }
-.menu-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 13.5px; cursor: pointer; }
+.menu-item { display: flex; align-items: center; gap: 10px; padding: 11px 14px; font-size: 13.5px; cursor: pointer; }
 .menu-item:hover { background: var(--surface-2); }
 .menu-item[data-on="true"] { background: color-mix(in oklab, var(--accent) 10%, transparent); }
 
-/* Tabs (used on Ride Detail) */
+/* Tabs */
 .tabs {
   display: flex; gap: 4px;
   border-bottom: 1px solid var(--border);
@@ -211,11 +268,11 @@ select.field {
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
   position: relative;
-  padding: 10px 14px 12px;
-  font-size: 13px; font-weight: 500;
+  padding: 12px 16px 14px;
+  font-size: 13.5px; font-weight: 500;
   color: var(--text-muted);
   white-space: nowrap;
-  transition: color 120ms;
+  transition: color 140ms;
   border: 0; background: transparent; cursor: pointer;
 }
 .tab[aria-selected="true"] {
@@ -223,7 +280,7 @@ select.field {
   font-weight: 600;
 }
 .tab[aria-selected="true"]::after {
-  content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px;
+  content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px;
   height: 2px; background: var(--accent); border-radius: 2px;
 }
 
@@ -244,28 +301,29 @@ select.field {
     radial-gradient(at 80% 80%, color-mix(in oklab, var(--accent) 4%, transparent), transparent 50%),
     var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
 }
 
-/* Custom focus ring */
+/* Focus ring */
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--ring-soft);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 /* Hide scrollbar utility */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { scrollbar-width: none; }
 
-/* ── Legacy convenience classes (used by routes pending redesign) ──── */
+/* ── Legacy convenience classes ──────────────────────────────────── */
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-[8px]
-           px-4 py-2 text-sm font-medium transition
+    @apply inline-flex items-center justify-center gap-2 rounded-[10px]
+           px-4 py-2 text-sm font-medium transition select-none
            focus:outline-none focus:ring-2 focus:ring-accent
            disabled:opacity-50 disabled:cursor-not-allowed;
+    min-height: 44px;
   }
   .btn-primary { background: var(--accent); color: #15161B; border: 1px solid var(--accent-strong); }
   .btn-primary:hover { background: var(--accent-strong); }
@@ -273,15 +331,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .btn-ghost:hover { background: var(--surface-2); }
   .btn-danger  { background: transparent; color: var(--danger); border: 1px solid var(--border); }
   .input {
-    @apply w-full rounded-[8px] px-3 py-2 text-sm
-           focus:outline-none;
+    @apply w-full rounded-[10px] px-3 py-2 text-sm focus:outline-none;
     background: var(--surface);
     color: var(--text);
     border: 1px solid var(--border);
+    min-height: 44px;
   }
   .input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring-soft); }
   .card {
-    @apply rounded-[12px] p-4 shadow-card;
+    @apply rounded-[14px] p-5 shadow-card;
     background: var(--surface);
     border: 1px solid var(--border);
   }
@@ -294,17 +352,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   }
 }
 
-/* Big-text accessibility mode (Driver / Profile toggle). The app uses
-   inline pixel font sizes throughout, so the lightest-touch way to
-   scale the whole UI is `zoom` on <body> — supported in Chrome/Safari
-   since forever and Firefox 126+. */
+/* Big-text accessibility mode */
 :root[data-bigtext="true"] body {
   zoom: 1.125;
 }
 
-/* Print: collapse the app chrome and show the waybill on a clean page.
-   The waybill content keeps `.waybill-print`; everything else gets
-   `.no-print` and is hidden. */
+/* Print: collapse the app chrome and show the waybill on a clean page. */
 @media print {
   body { background: #ffffff !important; color: #000000 !important; }
   .no-print { display: none !important; }
@@ -317,6 +370,5 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
     padding: 24px !important;
     page-break-inside: avoid;
   }
-  /* Drop the modal scaffolding so the waybill prints flat. */
   body * { box-shadow: none !important; }
 }

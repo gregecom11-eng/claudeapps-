@@ -54,6 +54,22 @@ function bucketOf(iso: string): Bucket {
   return "Evening";
 }
 
+// "morning" / "afternoon" / "evening" in LA, lowercased so it sits
+// naturally in the heading "Good morning, Mike."
+function timeOfDayLabel(): string {
+  const h = parseInt(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: BUSINESS_TZ,
+      hour: "numeric",
+      hour12: false,
+    }).format(new Date()),
+    10,
+  );
+  if (h < 12) return "morning";
+  if (h < 18) return "afternoon";
+  return "evening";
+}
+
 function laOffsetFor(d: Date): string {
   const part = new Intl.DateTimeFormat("en-US", {
     timeZone: BUSINESS_TZ,
@@ -174,19 +190,13 @@ export function Driver() {
   }
 
   const groups = groupByBucket(today ?? []);
+  const driverName = driverDisplayName(linked, profile?.full_name);
+  const greeting = firstName(driverName);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <div
-          className="text-muted"
-          style={{
-            fontSize: 12.5,
-            letterSpacing: "0.06em",
-            textTransform: "uppercase",
-            fontWeight: 500,
-          }}
-        >
+    <div className="space-y-8">
+      <div className="fade-up">
+        <div className="eyebrow">
           {new Date().toLocaleDateString("en-US", {
             timeZone: BUSINESS_TZ,
             weekday: "long",
@@ -195,25 +205,39 @@ export function Driver() {
           })}
         </div>
         <h1
-          className="mt-1"
-          style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.02em" }}
+          className="serif mt-2"
+          style={{
+            fontSize: 36,
+            fontWeight: 600,
+            letterSpacing: "-0.02em",
+            lineHeight: 1.05,
+          }}
         >
-          {firstName(driverDisplayName(linked, profile?.full_name))}'s day
+          Good {timeOfDayLabel()}, {greeting || "driver"}.
         </h1>
         <p
-          className="text-muted mt-1"
-          style={{ fontSize: 13.5, lineHeight: 1.5 }}
+          className="text-muted mt-2"
+          style={{ fontSize: 14.5, lineHeight: 1.55 }}
         >
           {today === null
-            ? "Loading…"
+            ? "Loading your day…"
             : today.length === 0
-            ? "Nothing on the books today. Enjoy a quiet morning."
-            : `${today.length} ${today.length === 1 ? "ride" : "rides"} assigned to you today.`}
+            ? "Nothing on the books today. Enjoy a quiet morning — we'll buzz if anything new comes in."
+            : `You have ${today.length} ride${
+                today.length === 1 ? "" : "s"
+              } today. Tap any card to open the briefing.`}
         </p>
       </div>
 
       {error ? (
-        <div className="surface rounded-[12px] p-4 text-danger text-sm">
+        <div
+          className="rounded-[14px] p-4 text-sm"
+          style={{
+            background: "color-mix(in oklab, var(--danger) 12%, var(--surface))",
+            border: "1px solid color-mix(in oklab, var(--danger) 28%, var(--border))",
+            color: "var(--danger)",
+          }}
+        >
           {error}
         </div>
       ) : null}
@@ -226,31 +250,45 @@ export function Driver() {
       ) : null}
 
       {today && today.length > 0 ? (
-        <div className="space-y-7">
+        <div className="space-y-8">
           {(["Morning", "Afternoon", "Evening"] as const).map((b) => {
             const items = groups[b];
             if (items.length === 0) return null;
             return (
-              <section key={b}>
-                <div className="flex items-center gap-3 mb-3">
-                  <Icon
-                    name={b === "Morning" ? "sun" : b === "Evening" ? "moon2" : "spark"}
-                    size={14}
-                    className="text-muted"
-                  />
-                  <h2
+              <section key={b} className="fade-up">
+                <div className="flex items-center gap-3 mb-4">
+                  <span
+                    className="inline-grid place-items-center text-accent"
                     style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      letterSpacing: "0.04em",
-                      textTransform: "uppercase",
+                      width: 26,
+                      height: 26,
+                      borderRadius: 8,
+                      background: "var(--accent-soft)",
+                      border: "1px solid color-mix(in oklab, var(--accent) 24%, var(--border))",
                     }}
                   >
+                    <Icon
+                      name={
+                        b === "Morning"
+                          ? "sun"
+                          : b === "Evening"
+                          ? "moon2"
+                          : "spark"
+                      }
+                      size={13}
+                    />
+                  </span>
+                  <h2 className="eyebrow" style={{ fontSize: 11.5 }}>
                     {b}
                   </h2>
+                  <span
+                    className="text-muted tnum"
+                    style={{ fontSize: 12 }}
+                  >
+                    {items.length} {items.length === 1 ? "ride" : "rides"}
+                  </span>
                   <div
-                    className="flex-1 h-px"
-                    style={{ background: "var(--border)" }}
+                    className="flex-1 hr-fine"
                   />
                 </div>
                 <ul className="space-y-3">
@@ -273,49 +311,60 @@ export function Driver() {
       ) : null}
 
       {tomorrow.length > 0 ? (
-        <section className="pt-2">
-          <div className="flex items-center gap-3 mb-3">
-            <Icon name="calendar" size={14} className="text-muted" />
-            <h2
+        <section className="pt-1 fade-up">
+          <div className="flex items-center gap-3 mb-4">
+            <span
+              className="inline-grid place-items-center text-muted"
               style={{
-                fontSize: 13,
-                fontWeight: 600,
-                letterSpacing: "0.04em",
-                textTransform: "uppercase",
+                width: 26,
+                height: 26,
+                borderRadius: 8,
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
               }}
             >
+              <Icon name="calendar" size={13} />
+            </span>
+            <h2 className="eyebrow" style={{ fontSize: 11.5 }}>
               Tomorrow preview
             </h2>
-            <div
-              className="flex-1 h-px"
-              style={{ background: "var(--border)" }}
-            />
+            <div className="flex-1 hr-fine" />
           </div>
-          <ul className="surface rounded-[12px] divide-y divide-border">
-            {tomorrow.map((r) => (
+          <ul className="surface rounded-[14px] overflow-hidden">
+            {tomorrow.map((r, i) => (
               <li
                 key={r.id}
-                className="px-4 py-3 flex items-center gap-3 cursor-pointer"
+                className="px-4 py-3.5 flex items-center gap-4 cursor-pointer transition active:scale-[0.995]"
                 onClick={() => setActiveRide(r)}
+                style={{
+                  borderTop: i === 0 ? "none" : "1px solid var(--border)",
+                }}
               >
-                <div className="tabular text-sm font-medium w-16">
+                <div
+                  className="display-num shrink-0"
+                  style={{
+                    fontSize: 22,
+                    width: 72,
+                    color: "var(--text)",
+                  }}
+                >
                   {fmtTime(r.pickup_at)}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div
                     className="truncate"
-                    style={{ fontSize: 13.5, fontWeight: 500 }}
+                    style={{ fontSize: 14, fontWeight: 600 }}
                   >
                     {r.passenger_name}
                   </div>
                   <div
                     className="text-muted truncate"
-                    style={{ fontSize: 12 }}
+                    style={{ fontSize: 12.5, marginTop: 1 }}
                   >
                     {r.pickup_address}
                   </div>
                 </div>
-                <StatusBadge status={r.status} />
+                <StatusBadge status={r.status} subtle />
               </li>
             ))}
           </ul>
@@ -441,54 +490,113 @@ function DriverRideCard({
   return (
     <button
       onClick={onTap}
-      className="w-full text-left surface rounded-[12px] p-4 transition"
+      className="w-full text-left rounded-[16px] p-5 transition active:scale-[0.995] relative overflow-hidden"
       style={{
-        boxShadow: isLive ? "0 0 0 1px var(--accent)" : undefined,
         background: isLive
-          ? "color-mix(in oklab, var(--accent) 6%, var(--surface))"
-          : undefined,
+          ? "color-mix(in oklab, var(--accent) 8%, var(--surface))"
+          : "var(--surface)",
+        border: `1px solid ${
+          isLive
+            ? "color-mix(in oklab, var(--accent) 40%, var(--border))"
+            : "var(--border)"
+        }`,
+        boxShadow: isLive
+          ? "0 6px 18px color-mix(in oklab, var(--accent) 22%, transparent)"
+          : "var(--shadow-sm)",
       }}
     >
-      <header className="flex items-center justify-between gap-3">
-        <div
-          className="tabular"
+      {/* Left accent stripe when the ride is live — gives the card the
+          "this is happening now" cue you see on Blacklane/Uber Driver. */}
+      {isLive ? (
+        <span
+          aria-hidden
           style={{
-            fontSize: 22,
-            fontWeight: 600,
-            letterSpacing: "-0.02em",
+            position: "absolute",
+            left: 0,
+            top: 14,
+            bottom: 14,
+            width: 3,
+            borderRadius: "0 3px 3px 0",
+            background: "var(--accent)",
           }}
-        >
-          {fmtTime(ride.pickup_at)}
+        />
+      ) : null}
+
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <div
+            className="display-num"
+            style={{
+              fontSize: 36,
+              color: "var(--text)",
+            }}
+          >
+            {fmtTime(ride.pickup_at)}
+          </div>
+          <div
+            className="text-muted tnum"
+            style={{
+              fontSize: 11.5,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              fontWeight: 500,
+              marginTop: 4,
+            }}
+          >
+            pickup
+          </div>
         </div>
         <StatusBadge status={ride.status} />
       </header>
-      <div className="mt-2 flex items-center gap-3">
-        <Avatar name={ride.passenger_name} size={28} />
+
+      <div className="mt-4 flex items-center gap-3">
+        <Avatar name={ride.passenger_name} size={36} />
         <div className="min-w-0 flex-1">
           <div
             className="truncate"
-            style={{ fontSize: 14, fontWeight: 600 }}
+            style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.005em" }}
           >
             {ride.passenger_name}
           </div>
-          <div className="text-muted truncate" style={{ fontSize: 12 }}>
+          <div
+            className="text-muted truncate"
+            style={{ fontSize: 12.5, marginTop: 1, lineHeight: 1.4 }}
+          >
             {ride.pickup_address}
             {ride.dropoff_address ? ` → ${ride.dropoff_address}` : ""}
           </div>
         </div>
       </div>
-      {vehicle ? (
-        <div
-          className="mt-2 inline-flex items-center gap-1.5 text-muted"
-          style={{ fontSize: 12 }}
-        >
-          <Icon name="car" size={12} />
-          <span className="tnum">
-            {vehicle.display_name}
-            {vehicle.plate ? ` · ${vehicle.plate}` : ""}
+
+      <div
+        className="mt-4 pt-3 flex items-center gap-2 text-muted"
+        style={{
+          borderTop: "1px solid var(--border)",
+          fontSize: 12,
+        }}
+      >
+        {vehicle ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Icon name="car" size={12} />
+            <span className="tnum">
+              {vehicle.display_name}
+              {vehicle.plate ? ` · ${vehicle.plate}` : ""}
+            </span>
           </span>
-        </div>
-      ) : null}
+        ) : (
+          <span className="inline-flex items-center gap-1.5">
+            <Icon name="car" size={12} />
+            <span>Vehicle TBD</span>
+          </span>
+        )}
+        <span className="flex-1" />
+        <span
+          className="inline-flex items-center gap-1 text-accent"
+          style={{ fontWeight: 600, fontSize: 12 }}
+        >
+          Open briefing <Icon name="arrow" size={11} />
+        </span>
+      </div>
     </button>
   );
 }
@@ -642,57 +750,60 @@ function RideSheet({
   return (
     <div
       className="fixed inset-0 z-40 flex items-end md:items-center justify-center"
-      style={{ background: "color-mix(in oklab, #000 50%, transparent)" }}
+      style={{ background: "color-mix(in oklab, #000 62%, transparent)" }}
       onClick={onClose}
     >
       <div
         ref={sheetRef}
-        className="surface rounded-t-[16px] md:rounded-[16px] w-full md:max-w-[560px] max-h-[94vh] overflow-y-auto"
+        className="w-full md:max-w-[580px] max-h-[94vh] overflow-y-auto fade-up"
         onClick={(e) => e.stopPropagation()}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderBottom: "none",
+          borderRadius: "20px 20px 0 0",
+          boxShadow: "var(--shadow-lg)",
           paddingBottom: "max(env(safe-area-inset-bottom), 16px)",
         }}
       >
-        {/* Drag handle (purely visual; the whole top region is draggable). */}
+        {/* Drag handle */}
         <div
           aria-hidden
-          className="md:hidden flex justify-center pt-2 pb-1"
+          className="md:hidden flex justify-center pt-2.5 pb-1"
           style={{ background: "var(--surface)" }}
         >
           <div
             style={{
-              width: 36,
+              width: 44,
               height: 4,
               borderRadius: 999,
-              background: "var(--border)",
+              background: "var(--border-strong)",
             }}
           />
         </div>
 
         {/* Header */}
         <div
-          className="px-5 pt-4 pb-3 flex items-start justify-between gap-3 sticky top-0"
+          className="px-6 pt-5 pb-4 flex items-start justify-between gap-3 sticky top-0"
           style={{
             borderBottom: "1px solid var(--border)",
             background: "var(--surface)",
           }}
         >
           <div className="min-w-0">
-            <div
-              className="text-muted tabular"
-              style={{ fontSize: 12.5 }}
-            >
+            <div className="eyebrow" style={{ fontSize: 10.5 }}>
               {fmtDate(ride.pickup_at)} · {fmtTime(ride.pickup_at)} PT
             </div>
             <h2
-              className="truncate"
+              className="serif truncate mt-1.5"
               style={{
-                fontSize: 22,
+                fontSize: 26,
                 fontWeight: 600,
                 letterSpacing: "-0.02em",
+                lineHeight: 1.1,
               }}
             >
               {ride.passenger_name}
@@ -701,13 +812,14 @@ function RideSheet({
           <button
             onClick={onClose}
             aria-label="Close"
-            className="inline-grid place-items-center"
+            className="inline-grid place-items-center transition active:scale-[0.94]"
             style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
+              width: 36,
+              height: 36,
+              borderRadius: 10,
               border: "1px solid var(--border)",
               color: "var(--text-muted)",
+              background: "var(--surface-2)",
             }}
           >
             <Icon name="x" size={14} />
@@ -751,11 +863,11 @@ function RideSheet({
         </div>
 
         {tab === "briefing" ? (
-          <div className="p-5 space-y-4">
+          <div className="p-6 space-y-5">
             {ride.passenger_phone ? (
               <a
                 href={`tel:${ride.passenger_phone}`}
-                className="w-full inline-flex items-center justify-center gap-2 rounded-[10px] h-12 text-[15px] font-semibold"
+                className="w-full inline-flex items-center justify-center gap-2 transition active:scale-[0.99] rounded-[14px] h-12 text-[15px] font-semibold"
                 style={{
                   background:
                     "color-mix(in oklab, var(--success) 22%, var(--surface))",
@@ -905,15 +1017,22 @@ function RideSheet({
           {ride.status === "completed" && nextRide ? (
             <button
               onClick={onJumpToNext}
-              className="w-full inline-flex items-center justify-between gap-2 rounded-[10px] h-12 px-4 text-[14px] font-semibold"
+              className="w-full inline-flex items-center justify-between gap-2 transition active:scale-[0.99]"
               style={{
+                height: 56,
+                borderRadius: 16,
+                padding: "0 20px",
+                fontSize: 15,
+                fontWeight: 600,
                 background: "var(--accent)",
                 color: "#15161B",
                 border: "1px solid var(--accent-strong)",
+                boxShadow:
+                  "0 8px 22px color-mix(in oklab, var(--accent) 32%, transparent)",
               }}
             >
               <span className="truncate">
-                Next: {firstName(nextRide.passenger_name)} ·{" "}
+                Next · {firstName(nextRide.passenger_name)} ·{" "}
                 {fmtTime(nextRide.pickup_at)}
               </span>
               <Icon name="arrow" size={16} />
@@ -1036,21 +1155,35 @@ function ActionBar({
   if (!next) {
     return (
       <div
-        className="rounded-[10px] px-3 py-3 text-center text-sm"
+        className="rounded-[14px] px-4 py-4 text-center"
         style={{
-          background: "var(--surface-2)",
-          border: "1px solid var(--border)",
+          background:
+            "color-mix(in oklab, var(--success) 10%, var(--surface-2))",
+          border:
+            "1px solid color-mix(in oklab, var(--success) 30%, var(--border))",
         }}
       >
-        <Icon name="check" size={18} className="text-accent inline-block" />
-        <div className="mt-1" style={{ fontWeight: 600 }}>
+        <div
+          className="inline-grid place-items-center mb-1"
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 999,
+            background: "color-mix(in oklab, var(--success) 22%, transparent)",
+            color: "var(--success)",
+          }}
+        >
+          <Icon name="check" size={18} />
+        </div>
+        <div
+          className="mt-1"
+          style={{ fontWeight: 600, fontSize: 14, color: "var(--text)" }}
+        >
           Ride {status}
         </div>
       </div>
     );
   }
-  // Action button label = the *next* status. Kept short so they don't
-  // wrap on small screens and read clearly when stressed.
   const labels: Record<RideStatus, string> = {
     requested: "",
     scheduled: "On my way",
@@ -1061,38 +1194,46 @@ function ActionBar({
     cancelled: "",
   };
   const label = labels[next];
+  const isComplete = next === "completed";
   return (
     <>
       <button
         onClick={() => onAdvance(next)}
-        className="w-full inline-flex items-center justify-center gap-2 rounded-[10px] h-12 text-[15px] font-semibold"
+        className="w-full inline-flex items-center justify-center gap-2 transition active:scale-[0.99]"
         style={{
-          background:
-            next === "completed"
-              ? "color-mix(in oklab, var(--success) 22%, var(--surface))"
-              : "var(--accent)",
-          color: next === "completed" ? "var(--success)" : "#15161B",
+          height: 56,
+          borderRadius: 16,
+          fontSize: 16,
+          fontWeight: 600,
+          letterSpacing: "-0.005em",
+          background: isComplete
+            ? "color-mix(in oklab, var(--success) 22%, var(--surface))"
+            : "var(--accent)",
+          color: isComplete ? "var(--success)" : "#15161B",
           border: `1px solid ${
-            next === "completed"
+            isComplete
               ? "color-mix(in oklab, var(--success) 50%, var(--border))"
               : "var(--accent-strong)"
           }`,
+          boxShadow: isComplete
+            ? "none"
+            : "0 8px 22px color-mix(in oklab, var(--accent) 32%, transparent)",
         }}
       >
-        <Icon
-          name={next === "completed" ? "check" : "arrow"}
-          size={16}
-        />
+        <Icon name={isComplete ? "check" : "arrow"} size={17} />
         {label}
       </button>
       {status !== "scheduled" && status !== "completed" ? (
         <button
           onClick={() => onAdvance(prevStatus(status) ?? "scheduled")}
-          className="w-full inline-flex items-center justify-center h-9 rounded-[10px] text-[12.5px]"
+          className="w-full inline-flex items-center justify-center transition active:scale-[0.99]"
           style={{
+            height: 38,
+            borderRadius: 12,
             background: "transparent",
             border: "1px solid var(--border)",
             color: "var(--text-muted)",
+            fontSize: 12.5,
           }}
         >
           ← Back to {prevStatusLabel(status)}
@@ -1921,19 +2062,22 @@ export function DriverPast() {
           <Icon name="back" size={13} /> Today
         </Link>
       </div>
-      <div>
+      <div className="fade-up">
+        <div className="eyebrow">Performance</div>
         <h1
+          className="serif mt-1.5"
           style={{
-            fontSize: 26,
+            fontSize: 32,
             fontWeight: 600,
             letterSpacing: "-0.02em",
+            lineHeight: 1.05,
           }}
         >
           Earnings
         </h1>
         <p
-          className="text-muted mt-1"
-          style={{ fontSize: 13.5, lineHeight: 1.5 }}
+          className="text-muted mt-2"
+          style={{ fontSize: 14, lineHeight: 1.55 }}
         >
           {earnings.allTime.count === 0
             ? "Once you mark rides complete, your tally lives here."
@@ -2118,46 +2262,43 @@ function EarningsHero({
   const deltaPositive = delta >= 0;
   return (
     <div
-      className="rounded-[14px] p-5 relative overflow-hidden"
-      style={{
-        background:
-          "linear-gradient(135deg, color-mix(in oklab, var(--accent) 18%, var(--surface)) 0%, var(--surface) 70%)",
-        border: "1px solid color-mix(in oklab, var(--accent) 35%, var(--border))",
-      }}
+      className="hero-wash rounded-[18px] p-6 relative overflow-hidden fade-up"
+      style={{ boxShadow: "var(--shadow-md)" }}
     >
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <div
-          className="text-muted"
-          style={{
-            fontSize: 11.5,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            fontWeight: 600,
-          }}
-        >
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="eyebrow" style={{ color: "var(--accent)" }}>
           This week
         </div>
         {showDelta && !loading ? (
           <span
-            className="chip tnum"
+            className="inline-flex items-center gap-1.5 tnum"
             title={
               deltaPositive
                 ? `${fmtMoney(delta)} more than last week`
                 : `${fmtMoney(Math.abs(delta))} less than last week`
             }
             style={{
-              background: "transparent",
+              padding: "3px 10px",
+              borderRadius: 999,
+              background: deltaPositive
+                ? "color-mix(in oklab, var(--success) 18%, transparent)"
+                : "var(--surface-2)",
+              border: `1px solid ${
+                deltaPositive
+                  ? "color-mix(in oklab, var(--success) 38%, var(--border))"
+                  : "var(--border)"
+              }`,
               color: deltaPositive ? "var(--success)" : "var(--text-muted)",
-              borderColor: deltaPositive
-                ? "color-mix(in oklab, var(--success) 50%, var(--border))"
-                : "var(--border)",
               fontSize: 11.5,
+              fontWeight: 600,
+              letterSpacing: "0.02em",
             }}
           >
             <span
               style={{
                 display: "inline-block",
                 transform: deltaPositive ? "none" : "rotate(180deg)",
+                lineHeight: 1,
               }}
             >
               ↑
@@ -2168,19 +2309,17 @@ function EarningsHero({
         ) : null}
       </div>
       <div
-        className="tnum"
+        className="display-num"
         style={{
-          fontSize: 40,
-          fontWeight: 700,
-          letterSpacing: "-0.03em",
-          lineHeight: 1.05,
+          fontSize: 64,
+          letterSpacing: "-0.035em",
         }}
       >
         {loading ? "—" : fmtMoney(thisWeek.gross)}
       </div>
       <div
-        className="text-muted mt-1"
-        style={{ fontSize: 13, lineHeight: 1.5 }}
+        className="text-muted mt-2"
+        style={{ fontSize: 13.5, lineHeight: 1.55 }}
       >
         {loading
           ? "Loading…"
@@ -2193,8 +2332,12 @@ function EarningsHero({
             )} tips`}
       </div>
       <div
-        className="mt-4 grid"
-        style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}
+        className="mt-5 pt-5 grid"
+        style={{
+          gridTemplateColumns: "repeat(4, 1fr)",
+          gap: 12,
+          borderTop: "1px solid color-mix(in oklab, var(--accent) 22%, var(--border))",
+        }}
       >
         <MiniStat
           label={thisWeek.count === 1 ? "ride" : "rides"}
@@ -2247,37 +2390,27 @@ function CompareTile({
 }) {
   return (
     <div
-      className="rounded-[12px] p-3"
+      className="rounded-[14px] p-4 transition"
       style={{
         background: "var(--surface)",
         border: "1px solid var(--border)",
       }}
     >
-      <div
-        className="text-muted"
-        style={{
-          fontSize: 10.5,
-          letterSpacing: "0.06em",
-          textTransform: "uppercase",
-          fontWeight: 500,
-        }}
-      >
+      <div className="eyebrow" style={{ fontSize: 10 }}>
         {label}
       </div>
       <div
-        className="tnum mt-1.5"
+        className="display-num mt-2"
         style={{
-          fontSize: 17,
-          fontWeight: 600,
-          letterSpacing: "-0.02em",
-          lineHeight: 1.1,
+          fontSize: 22,
+          color: "var(--text)",
         }}
       >
         {fmtMoney(bucket.gross)}
       </div>
       <div
         className="text-muted tnum"
-        style={{ fontSize: 11, marginTop: 2 }}
+        style={{ fontSize: 11.5, marginTop: 4 }}
       >
         {bucket.count} {bucket.count === 1 ? "ride" : "rides"}
       </div>
@@ -2289,19 +2422,23 @@ function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <div
-        className="tnum"
+        className="display-num"
         style={{
-          fontSize: 18,
-          fontWeight: 600,
-          letterSpacing: "-0.02em",
-          lineHeight: 1.15,
+          fontSize: 22,
+          color: "var(--text)",
         }}
       >
         {value}
       </div>
       <div
         className="text-muted"
-        style={{ fontSize: 11, marginTop: 1, letterSpacing: "0.02em" }}
+        style={{
+          fontSize: 10.5,
+          marginTop: 4,
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          fontWeight: 500,
+        }}
       >
         {label}
       </div>
@@ -2557,21 +2694,26 @@ export function DriverProfile() {
         </Link>
       </div>
 
-      <div className="flex items-center gap-4">
-        <Avatar name={name || "?"} size={56} />
+      <div className="fade-up flex items-center gap-4">
+        <Avatar name={name || "?"} size={64} shape="rounded" />
         <div className="min-w-0 flex-1">
+          <div className="eyebrow" style={{ fontSize: 10.5 }}>
+            Profile
+          </div>
           <h1
+            className="serif mt-1"
             style={{
-              fontSize: 22,
+              fontSize: 26,
               fontWeight: 600,
               letterSpacing: "-0.02em",
+              lineHeight: 1.1,
             }}
           >
-            {name || "Profile"}
+            {name || "Driver"}
           </h1>
           <div
             className="text-muted truncate"
-            style={{ fontSize: 12.5 }}
+            style={{ fontSize: 12.5, marginTop: 2 }}
           >
             {session?.user?.email}
           </div>
@@ -2585,7 +2727,7 @@ export function DriverProfile() {
         onToggle={toggleAvailability}
       />
 
-      <div className="surface rounded-[12px] p-5 space-y-4">
+      <div className="surface rounded-[14px] p-5 space-y-4">
         <Field label="Full name">
           <input
             className="field"

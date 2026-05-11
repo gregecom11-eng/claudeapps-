@@ -57,70 +57,85 @@ export function InstallBanner() {
 
   return (
     <div
-      className="px-3 py-2 flex items-center gap-3 flex-wrap"
+      className="mx-auto max-w-[680px] mt-3 mx-5"
       style={{
-        background:
-          "color-mix(in oklab, var(--accent) 12%, var(--surface))",
-        borderBottom:
-          "1px solid color-mix(in oklab, var(--accent) 35%, var(--border))",
+        margin: "12px 20px 0",
       }}
     >
-      <Icon
-        name="plus"
-        size={14}
-        className="text-accent shrink-0"
-      />
-      <div className="flex-1 min-w-0">
-        <span style={{ fontSize: 13, fontWeight: 600 }}>
-          Install SDLuxury on {friendly}
-        </span>
-        <span
-          className="text-muted ml-2"
-          style={{ fontSize: 12 }}
-        >
-          One-time, ~30 seconds. Faster + push notifications.
-        </span>
-      </div>
-      {native ? (
-        <button
-          onClick={onInstall}
-          className="inline-flex items-center justify-center h-8 px-3 rounded-[8px] text-[12.5px] font-semibold"
-          style={{
-            background: "var(--accent)",
-            color: "#15161B",
-            border: "1px solid var(--accent-strong)",
-          }}
-        >
-          Install
-        </button>
-      ) : (
-        <Link
-          to="/install"
-          className="inline-flex items-center gap-1 h-8 px-3 rounded-[8px] text-[12.5px] font-semibold"
-          style={{
-            background: "var(--accent)",
-            color: "#15161B",
-            border: "1px solid var(--accent-strong)",
-          }}
-        >
-          Show me how <Icon name="arrow" size={12} />
-        </Link>
-      )}
-      <button
-        onClick={onDismiss}
-        aria-label="Dismiss"
-        className="inline-grid place-items-center"
+      <div
+        className="flex items-center gap-3 rounded-[14px] px-4 py-3"
         style={{
-          width: 28,
-          height: 28,
-          borderRadius: 6,
-          border: "1px solid var(--border)",
-          color: "var(--text-muted)",
-          background: "transparent",
+          background:
+            "linear-gradient(135deg, color-mix(in oklab, var(--accent) 18%, var(--surface)) 0%, var(--surface) 80%)",
+          border: "1px solid color-mix(in oklab, var(--accent) 30%, var(--border))",
+          boxShadow: "var(--shadow-sm)",
         }}
       >
-        <Icon name="x" size={12} />
-      </button>
+        <span
+          className="inline-grid place-items-center shrink-0"
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 10,
+            background: "color-mix(in oklab, var(--accent) 18%, var(--surface))",
+            border: "1px solid color-mix(in oklab, var(--accent) 30%, var(--border))",
+            color: "var(--accent)",
+          }}
+        >
+          <Icon name="plus" size={14} />
+        </span>
+        <div className="flex-1 min-w-0">
+          <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.25 }}>
+            Add SDLuxury to your {friendly}
+          </div>
+          <div
+            className="text-muted"
+            style={{ fontSize: 12, marginTop: 2, lineHeight: 1.4 }}
+          >
+            Opens in a tap. Push notifications. No app store.
+          </div>
+        </div>
+        {native ? (
+          <button
+            onClick={onInstall}
+            className="inline-flex items-center justify-center h-9 px-3.5 rounded-[10px] text-[12.5px] font-semibold transition active:scale-[0.97] shrink-0"
+            style={{
+              background: "var(--accent)",
+              color: "#15161B",
+              border: "1px solid var(--accent-strong)",
+            }}
+          >
+            Install
+          </button>
+        ) : (
+          <Link
+            to="/install"
+            className="inline-flex items-center gap-1 h-9 px-3.5 rounded-[10px] text-[12.5px] font-semibold transition active:scale-[0.97] shrink-0"
+            style={{
+              background: "var(--accent)",
+              color: "#15161B",
+              border: "1px solid var(--accent-strong)",
+            }}
+          >
+            How <Icon name="arrow" size={12} />
+          </Link>
+        )}
+        <button
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          className="inline-grid place-items-center shrink-0 transition active:scale-[0.94]"
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 10,
+            border: "1px solid var(--border)",
+            color: "var(--text-muted)",
+            background: "transparent",
+          }}
+        >
+          <Icon name="x" size={13} />
+        </button>
+      </div>
     </div>
   );
 }

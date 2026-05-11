@@ -22,16 +22,13 @@ function looksLikeEmail(s: string | null | undefined): boolean {
   return !!s && /\S+@\S+\.\S+/.test(s);
 }
 
-// Minimal shell for the driver app — top brand bar + bottom 4-tab nav
-// (Today / Upcoming / Earnings / Profile). No admin chrome.
+// Driver shell — chauffeur-grade chrome:
+//  • Slim, generous top bar with serif logotype and "Hey ___" greeting.
+//  • Bottom nav uses a pill rest with the active tab lifted on a chip,
+//    so the dock feels like furniture rather than a strip of links.
 export function DriverShell() {
   const { profile, signOut } = useAuth();
   const [theme, setTheme] = useTheme();
-  // Today screen broadcasts the driver's display name once it claims
-  // the linked drivers row — that name is dispatcher-set and always
-  // human, while profile.full_name silently falls back to the user's
-  // email at signup (see handle_new_user trigger). Fall back to the
-  // profile name only when it doesn't look like an email.
   const profileName = profile?.full_name ?? null;
   const [driverName, setDriverName] = useState<string | null>(null);
   const displayName =
@@ -39,9 +36,6 @@ export function DriverShell() {
     (looksLikeEmail(profileName) ? null : profileName) ??
     "Driver";
 
-  // Today screen broadcasts `sdl:driver-active-ride` when any ride on
-  // its list is on_the_way / arrived / in_progress so the bottom tab
-  // bar can show a status dot even after you navigate to Upcoming.
   const [activeRideRunning, setActiveRideRunning] = useState(false);
   useEffect(() => {
     const onActive = (e: Event) => {
@@ -60,61 +54,63 @@ export function DriverShell() {
     };
   }, []);
 
+  const greeting = firstName(displayName);
+
   return (
     <div className="min-h-full flex flex-col">
       <header
         className="sticky top-0 z-20"
         style={{
-          background: "color-mix(in oklab, var(--bg) 80%, transparent)",
+          background:
+            "linear-gradient(to bottom, color-mix(in oklab, var(--bg) 92%, transparent) 0%, color-mix(in oklab, var(--bg) 75%, transparent) 100%)",
           borderBottom: "1px solid var(--border)",
-          backdropFilter: "blur(14px)",
-          WebkitBackdropFilter: "blur(14px)",
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
         }}
       >
-        <div className="mx-auto max-w-[680px] px-4 h-[68px] flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="mx-auto max-w-[680px] px-5 h-[72px] flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <div
               aria-hidden
-              className="grid place-items-center"
+              className="grid place-items-center shrink-0"
               style={{
-                width: 36,
-                height: 36,
-                borderRadius: 10,
-                background: "var(--surface-2)",
-                border: "1px solid var(--border)",
-                fontWeight: 700,
-                fontSize: 15,
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                background:
+                  "linear-gradient(135deg, color-mix(in oklab, var(--accent) 18%, var(--surface-2)), var(--surface-2))",
+                border: "1px solid color-mix(in oklab, var(--accent) 24%, var(--border))",
                 color: "var(--accent)",
-                letterSpacing: "0.02em",
+                fontWeight: 600,
+                fontSize: 17,
+                letterSpacing: "-0.01em",
+                fontFamily: "'Cormorant Garamond', Georgia, serif",
               }}
             >
               SD
             </div>
-            <div className="leading-tight">
+            <div className="leading-tight min-w-0">
               <div
+                className="serif"
                 style={{
+                  fontSize: 19,
                   fontWeight: 600,
-                  fontSize: 16,
                   letterSpacing: "-0.01em",
+                  lineHeight: 1.1,
                 }}
               >
                 SDLuxury
               </div>
               <div
-                className="text-muted"
-                style={{
-                  fontSize: 11.5,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                  marginTop: 1,
-                }}
+                className="eyebrow"
+                style={{ marginTop: 3 }}
               >
-                Driver
+                Chauffeur
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {firstName(displayName) && displayName !== "Driver" ? (
+            {greeting && displayName !== "Driver" ? (
               <span
                 className="hidden sm:inline-flex items-center chip"
                 title={`Signed in as ${displayName}`}
@@ -122,25 +118,26 @@ export function DriverShell() {
                   background: "var(--surface-2)",
                   color: "var(--text)",
                   fontWeight: 500,
-                  letterSpacing: "-0.01em",
-                  padding: "4px 12px",
+                  letterSpacing: "-0.005em",
+                  padding: "5px 12px",
                   fontSize: 13,
                 }}
               >
-                Hey {firstName(displayName)}
+                Hey {greeting}
               </span>
             ) : null}
             <IconButton
               name={theme === "dark" ? "sun" : "moon"}
               label="Toggle theme"
+              size="md"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
             />
             <button
               onClick={signOut}
               title={`Sign out (${displayName})`}
-              className="ml-1"
+              className="ml-1 transition active:scale-[0.96]"
             >
-              <Avatar name={displayName} size={36} />
+              <Avatar name={displayName} size={40} shape="rounded" />
             </button>
           </div>
         </div>
@@ -148,85 +145,92 @@ export function DriverShell() {
 
       <InstallBanner />
 
-      <main className="flex-1 mx-auto max-w-[680px] w-full px-4 py-6 pb-28">
+      <main className="flex-1 mx-auto max-w-[680px] w-full px-5 py-7 pb-32">
         <Outlet />
       </main>
 
       <nav
         className="fixed bottom-0 left-0 right-0 z-30"
         style={{
-          background: "color-mix(in oklab, var(--bg) 88%, transparent)",
-          borderTop: "1px solid var(--border)",
-          backdropFilter: "blur(14px)",
-          WebkitBackdropFilter: "blur(14px)",
           paddingBottom: "env(safe-area-inset-bottom)",
         }}
         aria-label="Sections"
       >
         <div
-          className="grid mx-auto max-w-[680px]"
-          style={{ gridTemplateColumns: `repeat(${TABS.length}, 1fr)` }}
+          className="mx-auto max-w-[680px] px-3 pt-2 pb-2"
+          style={{
+            background:
+              "linear-gradient(to top, var(--bg) 65%, color-mix(in oklab, var(--bg) 0%, transparent) 100%)",
+          }}
         >
-          {TABS.map((t) => (
-            <NavLink
-              key={t.to}
-              to={t.to}
-              end={t.end}
-              className="flex flex-col items-center justify-center gap-1"
-              style={({ isActive }) => ({
-                height: 68,
-                color: isActive ? "var(--accent)" : "var(--text-muted)",
-                position: "relative",
-              })}
+          <div
+            className="mx-auto"
+            style={{
+              background: "color-mix(in oklab, var(--surface) 92%, transparent)",
+              border: "1px solid var(--border)",
+              borderRadius: 22,
+              boxShadow: "var(--shadow-md)",
+              backdropFilter: "blur(16px)",
+              WebkitBackdropFilter: "blur(16px)",
+              padding: 4,
+            }}
+          >
+            <div
+              className="grid"
+              style={{ gridTemplateColumns: `repeat(${TABS.length}, 1fr)` }}
             >
-              {({ isActive }) => (
-                <>
-                  {isActive ? (
-                    <span
-                      aria-hidden
-                      style={{
-                        position: "absolute",
-                        top: 0,
-                        left: "50%",
-                        transform: "translateX(-50%)",
-                        width: 28,
-                        height: 3,
-                        borderRadius: "0 0 999px 999px",
-                        background: "var(--accent)",
-                      }}
-                    />
-                  ) : null}
-                  <span className="relative inline-flex">
-                    <Icon name={t.icon} size={22} />
-                    {t.to === "/" && activeRideRunning ? (
+              {TABS.map((t) => (
+                <NavLink
+                  key={t.to}
+                  to={t.to}
+                  end={t.end}
+                  className="flex flex-col items-center justify-center gap-1 transition select-none active:scale-[0.97]"
+                  style={({ isActive }) => ({
+                    height: 60,
+                    borderRadius: 18,
+                    color: isActive ? "#15161B" : "var(--text-muted)",
+                    background: isActive ? "var(--accent)" : "transparent",
+                    boxShadow: isActive
+                      ? "0 4px 14px color-mix(in oklab, var(--accent) 40%, transparent)"
+                      : "none",
+                    fontWeight: isActive ? 600 : 500,
+                  })}
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span className="relative inline-flex">
+                        <Icon name={t.icon} size={20} />
+                        {t.to === "/" && activeRideRunning && !isActive ? (
+                          <span
+                            aria-hidden
+                            style={{
+                              position: "absolute",
+                              top: -3,
+                              right: -4,
+                              width: 8,
+                              height: 8,
+                              borderRadius: 999,
+                              background: "var(--accent)",
+                              boxShadow: "0 0 0 2px var(--surface)",
+                            }}
+                          />
+                        ) : null}
+                      </span>
                       <span
-                        aria-hidden
                         style={{
-                          position: "absolute",
-                          top: -3,
-                          right: -5,
-                          width: 8,
-                          height: 8,
-                          borderRadius: 999,
-                          background: "var(--accent)",
-                          boxShadow: "0 0 0 2px var(--bg)",
+                          fontSize: 11,
+                          letterSpacing: "-0.005em",
+                          lineHeight: 1,
                         }}
-                      />
-                    ) : null}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 11.5,
-                      fontWeight: isActive ? 600 : 500,
-                      letterSpacing: "-0.005em",
-                    }}
-                  >
-                    {t.label}
-                  </span>
-                </>
-              )}
-            </NavLink>
-          ))}
+                      >
+                        {t.label}
+                      </span>
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </div>
+          </div>
         </div>
       </nav>
     </div>
