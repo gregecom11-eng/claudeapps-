@@ -54,7 +54,6 @@ export function Login() {
           : err,
       );
     }
-    // On success the AuthProvider session changes, gating us into the app.
   };
 
   const resend = async () => {
@@ -71,63 +70,130 @@ export function Login() {
   };
 
   return (
-    <main className="min-h-full flex items-center justify-center px-6">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="text-center space-y-2">
-          <div className="text-2xl font-semibold tracking-tight">
-            SDLuxury Ops
+    <main
+      className="min-h-full flex items-center justify-center px-6 py-10"
+      style={{
+        background:
+          "radial-gradient(120% 80% at 50% 0%, color-mix(in oklab, var(--accent) 14%, transparent), transparent 65%), var(--bg)",
+      }}
+    >
+      <div className="w-full max-w-sm space-y-8 fade-up">
+        {/* Brand */}
+        <div className="text-center space-y-3">
+          <div
+            aria-hidden
+            className="mx-auto grid place-items-center"
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: 16,
+              background:
+                "linear-gradient(135deg, color-mix(in oklab, var(--accent) 24%, var(--surface)), var(--surface))",
+              border: "1px solid color-mix(in oklab, var(--accent) 28%, var(--border))",
+              color: "var(--accent)",
+              fontFamily: "'Cormorant Garamond', Georgia, serif",
+              fontWeight: 600,
+              fontSize: 24,
+              letterSpacing: "-0.01em",
+            }}
+          >
+            SD
           </div>
-          <div className="text-sm text-muted">
+          <div>
+            <div
+              className="serif"
+              style={{
+                fontSize: 28,
+                fontWeight: 600,
+                letterSpacing: "-0.01em",
+                lineHeight: 1.1,
+              }}
+            >
+              SDLuxury
+            </div>
+            <div className="eyebrow mt-1.5">Chauffeur portal</div>
+          </div>
+          <div
+            className="text-muted"
+            style={{ fontSize: 14, lineHeight: 1.55, maxWidth: 280, margin: "0 auto" }}
+          >
             {step === "email"
-              ? "Enter your email — we'll send you a sign-in code."
-              : "Enter the code we just emailed you."}
+              ? "Sign in with your email — we'll send you a one-time code."
+              : "Enter the six-digit code we just emailed you."}
           </div>
         </div>
 
         {!configured ? (
-          <div className="card text-sm text-danger">
+          <div
+            className="rounded-[14px] p-4"
+            style={{
+              background: "color-mix(in oklab, var(--danger) 12%, var(--surface))",
+              border: "1px solid color-mix(in oklab, var(--danger) 30%, var(--border))",
+              color: "var(--danger)",
+              fontSize: 13,
+            }}
+          >
             Supabase not configured. Set <code>VITE_SUPABASE_URL</code> and{" "}
             <code>VITE_SUPABASE_ANON_KEY</code>.
           </div>
         ) : step === "email" ? (
-          <form onSubmit={sendCode} className="card space-y-3">
-            <label className="block text-sm space-y-1">
-              <span className="text-muted">Email</span>
+          <form
+            onSubmit={sendCode}
+            className="surface-elev rounded-[18px] p-6 space-y-4"
+          >
+            <div>
+              <label className="label">Email</label>
               <input
                 type="email"
                 required
                 autoFocus
                 inputMode="email"
                 autoComplete="email"
-                className="input"
+                className="field"
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
-            </label>
+            </div>
             {error ? (
-              <div className="text-sm text-danger">{error}</div>
+              <div className="text-danger" style={{ fontSize: 13 }}>
+                {error}
+              </div>
             ) : null}
             <button
               type="submit"
-              className="btn btn-primary w-full"
               disabled={status === "sending"}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-[14px] font-semibold transition active:scale-[0.99] disabled:opacity-60"
+              style={{
+                height: 54,
+                fontSize: 15.5,
+                background: "var(--accent)",
+                color: "#15161B",
+                border: "1px solid var(--accent-strong)",
+                boxShadow:
+                  "0 8px 22px color-mix(in oklab, var(--accent) 32%, transparent)",
+              }}
             >
-              {status === "sending" ? "Sending…" : "Send code"}
+              {status === "sending" ? "Sending…" : "Send sign-in code"}
             </button>
           </form>
         ) : (
-          <form onSubmit={verify} className="card space-y-3">
+          <form
+            onSubmit={verify}
+            className="surface-elev rounded-[18px] p-6 space-y-4"
+          >
             <div
-              className="text-muted small text-center"
-              style={{ fontSize: 12.5, lineHeight: 1.5 }}
+              className="text-muted text-center"
+              style={{ fontSize: 13, lineHeight: 1.55 }}
             >
-              Sent to <span className="text-text">{email}</span>. Enter
-              the code below — works the same as the link, and keeps
-              you signed in to this app.
+              Sent to{" "}
+              <span style={{ color: "var(--text)", fontWeight: 500 }}>
+                {email}
+              </span>
+              . The code keeps you signed in inside the installed app.
             </div>
-            <label className="block text-sm space-y-1">
-              <span className="text-muted">Code</span>
+            <div>
+              <label className="label">One-time code</label>
               <input
                 ref={codeInputRef}
                 inputMode="numeric"
@@ -135,22 +201,38 @@ export function Login() {
                 autoComplete="one-time-code"
                 maxLength={8}
                 required
-                className="input tabular tracking-[0.3em] text-center"
-                style={{ fontSize: 22, fontWeight: 600 }}
+                className="field tnum text-center"
+                style={{
+                  fontSize: 26,
+                  fontWeight: 600,
+                  letterSpacing: "0.4em",
+                  height: 60,
+                }}
                 placeholder="••••••"
                 value={code}
                 onChange={(e) =>
                   setCode(e.target.value.replace(/\D/g, "").slice(0, 8))
                 }
               />
-            </label>
+            </div>
             {error ? (
-              <div className="text-sm text-danger">{error}</div>
+              <div className="text-danger" style={{ fontSize: 13 }}>
+                {error}
+              </div>
             ) : null}
             <button
               type="submit"
-              className="btn btn-primary w-full"
               disabled={status === "verifying" || code.length < 6}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-[14px] font-semibold transition active:scale-[0.99] disabled:opacity-60"
+              style={{
+                height: 54,
+                fontSize: 15.5,
+                background: "var(--accent)",
+                color: "#15161B",
+                border: "1px solid var(--accent-strong)",
+                boxShadow:
+                  "0 8px 22px color-mix(in oklab, var(--accent) 32%, transparent)",
+              }}
             >
               {status === "verifying" ? "Verifying…" : "Sign in"}
             </button>
@@ -182,11 +264,11 @@ export function Login() {
 
         <p
           className="text-muted text-center"
-          style={{ fontSize: 11.5, lineHeight: 1.5 }}
+          style={{ fontSize: 11.5, lineHeight: 1.6, maxWidth: 300, margin: "0 auto" }}
         >
-          Tip: if you installed SDLuxury to your home screen, sign in
-          here with the code rather than tapping the link in your email.
-          The code keeps you signed in inside the installed app.
+          If you installed SDLuxury to your home screen, sign in with the
+          code rather than tapping the link in your email — it keeps you
+          signed in inside the installed app.
         </p>
       </div>
     </main>
