@@ -152,6 +152,9 @@ export function DriverShell() {
       <nav
         className="fixed bottom-0 left-0 right-0 z-30"
         style={{
+          // Solid through the iOS home-indicator band so the dock can
+          // never show page content underneath.
+          background: "var(--bg)",
           paddingBottom: "env(safe-area-inset-bottom)",
         }}
         aria-label="Sections"
