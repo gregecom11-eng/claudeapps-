@@ -127,21 +127,28 @@ function MobileDock({
       aria-label="Sections"
     >
       <div
-        className="mx-auto max-w-[680px] px-3 pt-2 pb-2"
+        className="mx-auto max-w-[680px] px-3 pt-3 pb-2"
         style={{
-          background:
-            "linear-gradient(to top, var(--bg) 65%, color-mix(in oklab, var(--bg) 0%, transparent) 100%)",
+          // Solid background so content scrolling underneath stops
+          // cleanly before reaching the dock instead of bleeding through
+          // a translucent strip.
+          background: "var(--bg)",
+          // Quick fade just above the solid band, so the page doesn't
+          // visibly "cut off" at a hard edge — the fade lives entirely
+          // above the dock and adds <12px of soft transition.
+          boxShadow:
+            "0 -12px 16px -12px color-mix(in oklab, var(--bg) 85%, transparent)",
         }}
       >
         <div
           className="mx-auto"
           style={{
-            background: "color-mix(in oklab, var(--surface) 92%, transparent)",
+            // Solid pill so nothing shows through it either. The
+            // floating shadow keeps the "lifted" feel.
+            background: "var(--surface)",
             border: "1px solid var(--border)",
             borderRadius: 22,
             boxShadow: "var(--shadow-md)",
-            backdropFilter: "blur(16px)",
-            WebkitBackdropFilter: "blur(16px)",
             padding: 4,
           }}
         >
