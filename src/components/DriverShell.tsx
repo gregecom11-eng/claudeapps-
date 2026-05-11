@@ -157,21 +157,22 @@ export function DriverShell() {
         aria-label="Sections"
       >
         <div
-          className="mx-auto max-w-[680px] px-3 pt-2 pb-2"
+          className="mx-auto max-w-[680px] px-3 pt-3 pb-2"
           style={{
-            background:
-              "linear-gradient(to top, var(--bg) 65%, color-mix(in oklab, var(--bg) 0%, transparent) 100%)",
+            // Solid surface so content scrolls under cleanly instead of
+            // bleeding through a translucent strip.
+            background: "var(--bg)",
+            boxShadow:
+              "0 -12px 16px -12px color-mix(in oklab, var(--bg) 85%, transparent)",
           }}
         >
           <div
             className="mx-auto"
             style={{
-              background: "color-mix(in oklab, var(--surface) 92%, transparent)",
+              background: "var(--surface)",
               border: "1px solid var(--border)",
               borderRadius: 22,
               boxShadow: "var(--shadow-md)",
-              backdropFilter: "blur(16px)",
-              WebkitBackdropFilter: "blur(16px)",
               padding: 4,
             }}
           >
