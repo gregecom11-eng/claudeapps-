@@ -123,7 +123,13 @@ function MobileDock({
   return (
     <nav
       className="md:hidden fixed bottom-0 left-0 right-0 z-30"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      style={{
+        // Solid all the way through (including the iOS home-indicator
+        // safe-area band) so nothing from the page scroll shows under
+        // the dock.
+        background: "var(--bg)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+      }}
       aria-label="Sections"
     >
       <div
