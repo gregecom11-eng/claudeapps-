@@ -7,6 +7,9 @@ import { useAuth, AuthProvider } from "./lib/auth";
 import { Book } from "./routes/Book";
 import { Calendar } from "./routes/Calendar";
 import { Client } from "./routes/Client";
+import { ClientAccount } from "./routes/ClientAccount";
+import { ClientTripDetail } from "./routes/ClientTripDetail";
+import { ClientTrips } from "./routes/ClientTrips";
 import { Clients } from "./routes/Clients";
 import { Drivers } from "./routes/Drivers";
 import { Earnings } from "./routes/Earnings";
@@ -81,6 +84,13 @@ function Gate() {
       <Routes>
         <Route element={<ClientShell />}>
           <Route index element={<Client />} />
+          <Route path="trips" element={<ClientTrips />} />
+          <Route path="trips/:id" element={<ClientTripDetail />} />
+          {/* Push notifications deep-link to /rides/:id; alias it to the
+              client trip detail so taps from a push land in the right
+              place instead of bouncing through the gate. */}
+          <Route path="rides/:id" element={<ClientTripDetail />} />
+          <Route path="account" element={<ClientAccount />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

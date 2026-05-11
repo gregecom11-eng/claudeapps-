@@ -26,7 +26,10 @@ export type BillingTerms =
   | "zelle"
   | "net_15"
   | "net_30"
-  | "company_billing";
+  | "company_billing"
+  | "affiliate"
+  | "invoice"
+  | "net30";
 
 export type Profile = {
   id: string;

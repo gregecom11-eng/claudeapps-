@@ -671,6 +671,32 @@ export async function listRideEvents(
   return data ?? [];
 }
 
+// Driver + vehicle for a ride the caller owns. Uses a security-definer
+// RPC because clients have no SELECT on drivers/vehicles under RLS.
+// Returns null when the caller doesn't have access or the ride has no
+// driver/vehicle assigned yet.
+export async function getMyRideDetails(rideId: string): Promise<{
+  driver_full_name: string | null;
+  driver_phone: string | null;
+  vehicle_display_name: string | null;
+  vehicle_color: string | null;
+  vehicle_plate: string | null;
+} | null> {
+  const { data, error } = await supabase.rpc("get_my_ride_details", {
+    p_ride_id: rideId,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return null;
+  return {
+    driver_full_name: row.driver_full_name ?? null,
+    driver_phone: row.driver_phone ?? null,
+    vehicle_display_name: row.vehicle_display_name ?? null,
+    vehicle_color: row.vehicle_color ?? null,
+    vehicle_plate: row.vehicle_plate ?? null,
+  };
+}
+
 // Past rides for the same passenger (matched by name OR client_id).
 // Used by the "passenger history" card on the driver ride sheet.
 export async function listPassengerHistory(
