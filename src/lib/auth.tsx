@@ -20,6 +20,7 @@ type AuthCtx = {
     email: string,
     code: string,
   ) => Promise<{ error: string | null }>;
+  signInWithGoogle: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 };
 
@@ -91,6 +92,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email,
           token: code.trim(),
           type: "email",
+        });
+        return { error: error?.message ?? null };
+      },
+      signInWithGoogle: async () => {
+        // BASE_URL keeps the redirect on GitHub Pages' subpath
+        // (/claudeapps-/), which is what we registered in Supabase's
+        // allowed redirect list. window.location.origin on its own
+        // would land at the repo root and Supabase would reject it.
+        const redirectTo = `${window.location.origin}${
+          import.meta.env.BASE_URL ?? "/"
+        }`;
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: "google",
+          options: { redirectTo },
         });
         return { error: error?.message ?? null };
       },
