@@ -109,7 +109,7 @@ export function RideCard({ ride, driver, vehicle }: Props) {
 
       <div
         className="mt-3 grid gap-2"
-        style={{ gridTemplateColumns: "10px 1fr" }}
+        style={{ gridTemplateColumns: "10px minmax(0, 1fr)" }}
       >
         <div className="flex flex-col items-center pt-1.5">
           <span
