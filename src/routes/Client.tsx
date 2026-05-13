@@ -304,7 +304,7 @@ function NextRideHero({ ride }: { ride: Ride }) {
 
         <div
           className="mt-5 grid gap-2"
-          style={{ gridTemplateColumns: "10px 1fr", fontSize: 14 }}
+          style={{ gridTemplateColumns: "10px minmax(0, 1fr)", fontSize: 14 }}
         >
           <div className="flex flex-col items-center pt-1.5">
             <span

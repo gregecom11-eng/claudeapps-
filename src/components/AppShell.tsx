@@ -462,6 +462,11 @@ export function AppShell() {
     location.pathname === t.to ||
     (t.to !== "/" && location.pathname.startsWith(t.to + "/")),
   );
+  // Routes where the page renders its own sticky bottom bar (the RideForm
+  // has a Save bar). The mobile dock would otherwise cover that bar.
+  const isFocusedTask =
+    location.pathname === "/rides/new" ||
+    /^\/rides\/[^/]+\/edit$/.test(location.pathname);
 
   return (
     <div className="min-h-full flex flex-col">
@@ -518,7 +523,16 @@ export function AppShell() {
         <Outlet />
       </main>
 
-      <MobileDock onMore={() => setMoreOpen(true)} moreActive={moreActive} />
+      {/* The ride form has its own sticky save bar pinned to the bottom.
+          Showing the dock on top of that would hide the Save buttons,
+          which is exactly what was happening on phones. Drop the dock
+          while the form is the active task. */}
+      {isFocusedTask ? null : (
+        <MobileDock
+          onMore={() => setMoreOpen(true)}
+          moreActive={moreActive}
+        />
+      )}
       <MoreSheet
         open={moreOpen}
         onClose={() => setMoreOpen(false)}

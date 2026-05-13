@@ -254,7 +254,10 @@ export function ClientTripDetail() {
 
       {/* Pickup / dropoff */}
       <section className="space-y-3">
-        <div className="grid gap-2" style={{ gridTemplateColumns: "10px 1fr" }}>
+        <div
+          className="grid gap-2"
+          style={{ gridTemplateColumns: "10px minmax(0, 1fr)" }}
+        >
           <div className="flex flex-col items-center pt-1.5">
             <span
               style={{
