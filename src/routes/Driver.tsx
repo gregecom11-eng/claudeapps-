@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   addRideExtra,
   claimDriverByEmail,
@@ -101,6 +101,23 @@ export function Driver() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeRide, setActiveRide] = useState<Ride | null>(null);
+  // Push payloads deep-link to /rides/:id; the driver gate aliases that
+  // to /?ride=<id>. When we see that param, auto-open the ride sheet so
+  // a tap on the notification lands inside the right briefing.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const pendingRideId = searchParams.get("ride");
+  useEffect(() => {
+    if (!pendingRideId || today === null) return;
+    const match =
+      today.find((r) => r.id === pendingRideId) ||
+      tomorrow.find((r) => r.id === pendingRideId);
+    if (match) {
+      setActiveRide(match);
+      const next = new URLSearchParams(searchParams);
+      next.delete("ride");
+      setSearchParams(next, { replace: true });
+    }
+  }, [pendingRideId, today, tomorrow, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!session) return;

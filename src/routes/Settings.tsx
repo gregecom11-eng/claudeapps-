@@ -62,7 +62,7 @@ export function Settings() {
             letterSpacing: "-0.02em",
           }}
         >
-          Workshop &amp; preferences
+          Workspace &amp; preferences
         </h1>
         <p
           className="text-muted mt-1.5"

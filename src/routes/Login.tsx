@@ -126,7 +126,7 @@ export function Login() {
             >
               SDLuxury
             </div>
-            <div className="eyebrow mt-1.5">Chauffeur portal</div>
+            <div className="eyebrow mt-1.5">Sign in</div>
           </div>
           <div
             className="text-muted"
