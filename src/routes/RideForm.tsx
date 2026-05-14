@@ -543,7 +543,21 @@ export function RideForm() {
                     <button
                       type="button"
                       key={d.id}
-                      onClick={() => update("driver_id", on ? "" : d.id)}
+                      onClick={() =>
+                        setForm((f) => {
+                          const nextDriverId = on ? "" : d.id;
+                          // auto-fill vehicle from the driver's default_vehicle_id; never overwrite a manual pick
+                          const shouldAutoFill =
+                            !on && !f.vehicle_id && d.default_vehicle_id;
+                          return {
+                            ...f,
+                            driver_id: nextDriverId,
+                            vehicle_id: shouldAutoFill
+                              ? d.default_vehicle_id!
+                              : f.vehicle_id,
+                          };
+                        })
+                      }
                       className="flex items-center gap-2.5 px-3 py-2.5 text-left transition"
                       style={{
                         borderRadius: 10,
