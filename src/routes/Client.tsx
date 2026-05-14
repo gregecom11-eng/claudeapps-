@@ -420,6 +420,8 @@ function NextRideHero({ ride }: { ride: Ride }) {
 }
 
 export function TripRow({ ride }: { ride: Ride }) {
+  const isCompleted = ride.status === "completed";
+  const bookAgainHref = buildBookAgainHref(ride);
   return (
     <Link
       to={`/trips/${ride.id}`}
@@ -461,10 +463,52 @@ export function TripRow({ ride }: { ride: Ride }) {
             {prettyStatus(ride.status)}
           </div>
         </div>
-        <Icon name="chev" size={14} className="text-muted shrink-0" />
+        {isCompleted ? (
+          // Replace the chevron on completed rides with a small,
+          // restrained "Book again" link. Stop propagation + use a
+          // Link of its own so the tap doesn't navigate to the trip
+          // detail.
+          <Link
+            to={bookAgainHref}
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1 shrink-0 rounded-[8px] px-2.5 h-8 text-accent"
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: "0.01em",
+              background:
+                "color-mix(in oklab, var(--accent) 8%, var(--surface-2))",
+              border:
+                "1px solid color-mix(in oklab, var(--accent) 22%, var(--border))",
+            }}
+            aria-label="Book this trip again"
+          >
+            <Icon name="plus" size={12} />
+            Book again
+          </Link>
+        ) : (
+          <Icon name="chev" size={14} className="text-muted shrink-0" />
+        )}
       </div>
     </Link>
   );
+}
+
+// Build the /book deep-link for a completed ride. We pre-fill pickup,
+// dropoff, and (when the ride had flight info) the airline + number,
+// switching trip_type to "airport". Otherwise the form falls back to
+// the default one_way flow.
+function buildBookAgainHref(ride: Ride): string {
+  const params = new URLSearchParams();
+  if (ride.pickup_address) params.set("pickup", ride.pickup_address);
+  if (ride.dropoff_address) params.set("dropoff", ride.dropoff_address);
+  if (ride.flight_airline || ride.flight_number) {
+    if (ride.flight_airline) params.set("flight_airline", ride.flight_airline);
+    if (ride.flight_number) params.set("flight_number", ride.flight_number);
+    params.set("trip_type", "airport");
+  }
+  const qs = params.toString();
+  return qs ? `/book?${qs}` : "/book";
 }
 
 function SectionHeader({ title, to }: { title: string; to?: string }) {

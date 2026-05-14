@@ -5,10 +5,12 @@
 // with status='requested' and source='booking_form'. Owner sees it on the
 // dashboard activity feed and Today/upcoming.
 
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { submitBookingRequest } from "../lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { claimClientByEmail, submitBookingRequest } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { Icon } from "../components/Icon";
+import { PlacesInput } from "../components/PlacesInput";
 
 type TripType = "one_way" | "round_trip" | "hourly" | "airport";
 const TRIP_TYPES: { id: TripType; label: string; hint: string }[] = [
@@ -22,19 +24,61 @@ type Step = 0 | 1 | 2 | 3;
 const STEP_LABELS = ["Trip type", "When & where", "Contact", "Review"];
 
 export function Book() {
+  // URL pre-fill — supports a "Book again" link from past trips.
+  // e.g. /book?pickup=...&dropoff=...&flight_airline=...&flight_number=...&trip_type=airport
+  const [searchParams] = useSearchParams();
+  const initialTripType = ((): TripType => {
+    const t = searchParams.get("trip_type");
+    if (t === "airport" || t === "one_way" || t === "round_trip" || t === "hourly") return t;
+    return "airport";
+  })();
+  const initialPickup = searchParams.get("pickup") ?? "";
+  const initialDropoff = searchParams.get("dropoff") ?? "";
+  const initialFlightAirline = searchParams.get("flight_airline") ?? "";
+  const initialFlightNumber = searchParams.get("flight_number") ?? "";
+  const initialNotes = ((): string => {
+    const a = initialFlightAirline.trim();
+    const n = initialFlightNumber.trim();
+    if (!a && !n) return "";
+    return `Flight: ${[a, n].filter(Boolean).join(" ")}`.trim();
+  })();
+
   const [step, setStep] = useState<Step>(0);
-  const [tripType, setTripType] = useState<TripType>("airport");
+  const [tripType, setTripType] = useState<TripType>(initialTripType);
   const [pickupDate, setPickupDate] = useState("");
   const [pickupTime, setPickupTime] = useState("09:00");
-  const [pickupAddr, setPickupAddr] = useState("");
-  const [dropoffAddr, setDropoffAddr] = useState("");
+  const [pickupAddr, setPickupAddr] = useState(initialPickup);
+  const [dropoffAddr, setDropoffAddr] = useState(initialDropoff);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(initialNotes);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Pre-fill the contact step for signed-in clients so they don't have
+  // to retype every booking. Only fires if a profile w/ role=client is
+  // present AND claim_client_by_email returns a linked client row.
+  const { profile, session } = useAuth();
+  useEffect(() => {
+    if (profile?.role !== "client") return;
+    let cancelled = false;
+    claimClientByEmail()
+      .then((client) => {
+        if (cancelled || !client) return;
+        // Only seed empty fields — never clobber user typing.
+        setName((prev) => prev || client.name || "");
+        setEmail((prev) => prev || session?.user?.email || "");
+        setPhone((prev) => prev || client.phone || "");
+      })
+      .catch(() => {
+        // Silent — the booking form still works without pre-fill.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.role, session?.user?.email]);
 
   const can = useMemo(
     () => ({
@@ -375,21 +419,19 @@ function StepWhenWhere({
         </Field>
       </div>
       <Field label="Pickup address">
-        <input
-          className="field"
+        <PlacesInput
           placeholder="e.g. 9876 Wilshire Blvd, Beverly Hills"
           value={pickupAddr}
-          onChange={(e) => onChange({ pickupAddr: e.target.value })}
+          onChange={(v) => onChange({ pickupAddr: v })}
           required
         />
       </Field>
       {tripType !== "hourly" ? (
         <Field label="Dropoff address">
-          <input
-            className="field"
+          <PlacesInput
             placeholder="e.g. LAX · Tom Bradley Intl Terminal"
             value={dropoffAddr}
-            onChange={(e) => onChange({ dropoffAddr: e.target.value })}
+            onChange={(v) => onChange({ dropoffAddr: v })}
             required
           />
         </Field>
