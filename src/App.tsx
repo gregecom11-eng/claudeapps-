@@ -109,11 +109,13 @@ function Gate() {
     );
   }
   if (!session) {
-    // Public marketing landing at `/`; everything else falls through
-    // to the login screen so deep links still funnel into auth.
+    // Public marketing landing at `/` for browser visitors, but PWA
+    // users (saved to home screen) skip the landing and go straight to
+    // the login screen — they're repeat users coming back to the app,
+    // not first-time marketing visitors.
     return (
       <Routes>
-        <Route path="/" element={<Landing />} />
+        <Route path="/" element={<UnauthedRoot />} />
         <Route path="/login" element={<Login />} />
         <Route path="*" element={<Login />} />
       </Routes>
@@ -185,4 +187,25 @@ function Gate() {
       </Routes>
     </Suspense>
   );
+}
+
+// Routes the root path differently depending on how the visitor got
+// here:
+//   - PWA standalone (saved to home screen on iOS/Android) → /login,
+//     because they're an operator/driver/client coming back to the
+//     app, not a first-time marketing visitor.
+//   - Regular browser → Landing.
+// We check standalone synchronously to avoid a flash of the landing.
+function UnauthedRoot() {
+  const isStandalone =
+    typeof window !== "undefined" &&
+    // matchMedia covers Android Chrome and modern iOS.
+    ((window.matchMedia &&
+      window.matchMedia("(display-mode: standalone)").matches) ||
+      // Legacy iOS Safari home-screen flag.
+      (navigator as { standalone?: boolean }).standalone === true);
+  if (isStandalone) {
+    return <Navigate to="/login" replace />;
+  }
+  return <Landing />;
 }

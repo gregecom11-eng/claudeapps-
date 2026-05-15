@@ -4,7 +4,7 @@
 // request (Supabase REST, fonts, etc.) — those must always hit the network
 // or stale data sneaks in (the dashboard once cached an empty rides list
 // and the dashboard kept showing zero rides even after writes).
-const CACHE = "limo-shell-v2";
+const CACHE = "limo-shell-v3";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
 
 self.addEventListener("install", (event) => {
