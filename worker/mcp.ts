@@ -2,7 +2,7 @@
 // Handles initialize, tools/list, tools/call, plus list-stubs Claude probes.
 
 import { corsHeaders, type Env } from "./index";
-import { TOOL_SCHEMAS, executeTool } from "./tools";
+import { TOOL_SCHEMAS, executeTool, type ToolContext } from "./tools";
 
 type JsonRpcReq = {
   jsonrpc: "2.0";
@@ -25,6 +25,7 @@ const SERVER_INFO = { name: "sdluxury-ops", version: "0.2.0" };
 export async function handleMcpRequest(
   request: Request,
   env: Env,
+  ctx: ToolContext,
 ): Promise<Response> {
   let body: unknown;
   try {
@@ -35,13 +36,13 @@ export async function handleMcpRequest(
 
   if (Array.isArray(body)) {
     const responses = await Promise.all(
-      body.map((req) => handleSingle(req as JsonRpcReq, env)),
+      body.map((req) => handleSingle(req as JsonRpcReq, env, ctx)),
     );
     const filtered = responses.filter((r): r is JsonRpcRes => r !== null);
     return jsonResponse(filtered);
   }
 
-  const res = await handleSingle(body as JsonRpcReq, env);
+  const res = await handleSingle(body as JsonRpcReq, env, ctx);
   if (res === null) {
     return new Response(null, { status: 202, headers: corsHeaders() });
   }
@@ -51,6 +52,7 @@ export async function handleMcpRequest(
 async function handleSingle(
   req: JsonRpcReq,
   env: Env,
+  ctx: ToolContext,
 ): Promise<JsonRpcRes | null> {
   if (!req || req.jsonrpc !== "2.0" || typeof req.method !== "string") {
     return errorRes(req?.id ?? null, -32600, "Invalid Request");
@@ -92,6 +94,7 @@ async function handleSingle(
           params.name,
           params.arguments ?? {},
           env,
+          ctx,
         );
         return okRes(req.id ?? null, result);
       }

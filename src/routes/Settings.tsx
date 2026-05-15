@@ -1595,11 +1595,14 @@ function ClientForm({
 /* ── Connector (MCP) ───────────────────────────────────────────────── */
 function ConnectorSection({ flash }: { flash: (m: string) => void }) {
   const [revealed, setRevealed] = useState(false);
+  const headerEndpoint = `${DASHBOARD_ORIGIN}/api/mcp`;
   const urlPattern = `${DASHBOARD_ORIGIN}/api/mcp/<MCP_API_KEY>`;
-  const onCopy = async () => {
+  const headerSnippet = `Authorization: Bearer <MCP_API_KEY>`;
+
+  const copy = async (text: string, label: string) => {
     try {
-      await navigator.clipboard?.writeText(urlPattern);
-      flash("Pattern copied");
+      await navigator.clipboard?.writeText(text);
+      flash(`${label} copied`);
     } catch {
       flash("Copy failed");
     }
@@ -1618,8 +1621,9 @@ function ConnectorSection({ flash }: { flash: (m: string) => void }) {
     <Section
       eyebrow="05 — Integrations"
       title="Claude.ai connector"
-      subtitle="The MCP endpoint Claude calls to create and read rides. Your secret API key is set as a Cloudflare secret — the dashboard cannot read it back."
+      subtitle="The MCP endpoint Claude calls to create and read rides. Two auth forms are supported: a Bearer header (preferred where possible) and a URL-embedded token (used by Claude.ai custom connectors). Your secret is set as a Cloudflare secret — the dashboard cannot read it back."
     >
+      {/* Header-based auth — preferred */}
       <div
         className="p-4 grid gap-3"
         style={{ borderBottom: "1px solid var(--border)" }}
@@ -1634,7 +1638,68 @@ function ConnectorSection({ flash }: { flash: (m: string) => void }) {
               fontWeight: 500,
             }}
           >
-            Connector URL pattern
+            Header auth (preferred) — Claude Desktop, scripts
+          </div>
+          <div
+            className="flex items-center gap-2 rounded-[8px] px-3 py-2 mono"
+            style={{
+              background: "var(--surface-2)",
+              border: "1px solid var(--border)",
+              fontSize: 12.5,
+              wordBreak: "break-all",
+            }}
+          >
+            <span className="flex-1 min-w-0">{headerEndpoint}</span>
+            <button
+              className="text-muted hover:text-text"
+              onClick={() => copy(headerEndpoint, "Endpoint")}
+              aria-label="Copy endpoint"
+            >
+              <Icon name="copy" size={14} />
+            </button>
+          </div>
+          <div
+            className="flex items-center gap-2 rounded-[8px] px-3 py-2 mono mt-2"
+            style={{
+              background: "var(--surface-2)",
+              border: "1px solid var(--border)",
+              fontSize: 12.5,
+              wordBreak: "break-all",
+            }}
+          >
+            <span className="flex-1 min-w-0">{headerSnippet}</span>
+            <button
+              className="text-muted hover:text-text"
+              onClick={() => copy(headerSnippet, "Header")}
+              aria-label="Copy header"
+            >
+              <Icon name="copy" size={14} />
+            </button>
+          </div>
+          <p className="help">
+            POST JSON-RPC to <code>/api/mcp</code> with the{" "}
+            <code>Authorization</code> header set. Use this for Claude Desktop
+            (<code>claude_desktop_config.json</code>) and any custom tooling.
+          </p>
+        </div>
+      </div>
+
+      {/* URL-token auth — Claude.ai custom connector */}
+      <div
+        className="p-4 grid gap-3"
+        style={{ borderBottom: "1px solid var(--border)" }}
+      >
+        <div>
+          <div
+            className="text-muted mb-1.5"
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              fontWeight: 500,
+            }}
+          >
+            URL-token form — Claude.ai custom connector
           </div>
           <div
             className="flex items-center gap-2 rounded-[8px] px-3 py-2 mono"
@@ -1660,7 +1725,7 @@ function ConnectorSection({ flash }: { flash: (m: string) => void }) {
             </button>
             <button
               className="text-muted hover:text-text"
-              onClick={onCopy}
+              onClick={() => copy(urlPattern, "Pattern")}
               aria-label="Copy"
             >
               <Icon name="copy" size={14} />
@@ -1669,7 +1734,8 @@ function ConnectorSection({ flash }: { flash: (m: string) => void }) {
           <p className="help">
             Replace <code>&lt;MCP_API_KEY&gt;</code> with the secret you set
             in Cloudflare. Paste the resulting URL into Claude.ai → Settings
-            → Connectors → Add custom connector.
+            → Connectors → Add custom connector. This form is the only
+            option for Claude.ai personal-account connectors.
           </p>
         </div>
       </div>
