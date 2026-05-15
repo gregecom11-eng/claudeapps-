@@ -67,7 +67,7 @@ function LandingNav() {
           </a>
           <Link
             to="/login"
-            className="hidden md:inline-flex items-center justify-center h-9 px-3 text-[13px] text-muted hover:text-text transition-colors tracking-wide"
+            className="inline-flex items-center justify-center h-9 px-3 text-[13px] text-muted hover:text-text transition-colors tracking-wide"
           >
             Sign in
           </Link>
