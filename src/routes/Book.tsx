@@ -34,6 +34,14 @@ export function Book() {
   })();
   const initialPickup = searchParams.get("pickup") ?? "";
   const initialDropoff = searchParams.get("dropoff") ?? "";
+  // pickup_at lets the landing hero widget pre-fill date+time so the
+  // visitor doesn't retype it. Accepts "YYYY-MM-DDTHH:MM" (local).
+  const initialPickupAt = searchParams.get("pickup_at") ?? "";
+  const [initialDate, initialTime] = (() => {
+    if (!initialPickupAt) return ["", "09:00"];
+    const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(initialPickupAt);
+    return m ? [m[1], m[2]] : ["", "09:00"];
+  })();
   const initialFlightAirline = searchParams.get("flight_airline") ?? "";
   const initialFlightNumber = searchParams.get("flight_number") ?? "";
   const initialNotes = ((): string => {
@@ -43,10 +51,12 @@ export function Book() {
     return `Flight: ${[a, n].filter(Boolean).join(" ")}`.trim();
   })();
 
-  const [step, setStep] = useState<Step>(0);
+  // If the landing widget passes pickup_at, start on step 1 (when & where)
+  // so the visitor sees their pre-filled data and doesn't re-pick trip type.
+  const [step, setStep] = useState<Step>(initialPickupAt ? 1 : 0);
   const [tripType, setTripType] = useState<TripType>(initialTripType);
-  const [pickupDate, setPickupDate] = useState("");
-  const [pickupTime, setPickupTime] = useState("09:00");
+  const [pickupDate, setPickupDate] = useState(initialDate);
+  const [pickupTime, setPickupTime] = useState(initialTime);
   const [pickupAddr, setPickupAddr] = useState(initialPickup);
   const [dropoffAddr, setDropoffAddr] = useState(initialDropoff);
   const [name, setName] = useState("");
