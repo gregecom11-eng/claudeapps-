@@ -140,7 +140,7 @@ end;
 $$;
 
 revoke all on function public.check_and_increment_rate_limit(text, int, int)
-  from public;
+  from public, anon, authenticated;
 -- Service role only.
 
 -- =====================================================================
@@ -250,5 +250,5 @@ $$;
 
 revoke all on function public.apply_ride_update_v1(
   uuid, jsonb, text[], text, text, boolean
-) from public;
+) from public, anon, authenticated;
 -- Service role only.
