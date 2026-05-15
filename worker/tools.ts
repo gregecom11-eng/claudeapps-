@@ -2,7 +2,7 @@
 //   { content: [{ type: "text", text: "..." }], isError?: boolean }
 
 import type { Env } from "./index";
-import { summarizeRideChanges } from "./pii";
+import { summarizeChanges, summarizeRideChanges } from "./pii";
 import { adminClient } from "./supabase";
 
 // Tool errors carry an HTTP-style status the caller can render even though
@@ -50,6 +50,20 @@ const UPDATABLE_RIDE_FIELDS = [
   "passenger_name",
   "notes",
 ] as const;
+
+// Order used for the changed_fields output of update_client.
+const UPDATABLE_CLIENT_FIELDS = [
+  "name",
+  "phone",
+  "email",
+  "default_billing",
+  "home_address",
+  "previous_addresses",
+  "status",
+  "notes",
+] as const;
+
+const CLIENT_STATUSES = ["active", "inactive"] as const;
 
 export const TOOL_SCHEMAS = [
   {
@@ -288,6 +302,112 @@ export const TOOL_SCHEMAS = [
       required: ["ride_id"],
     },
   },
+  {
+    name: "update_client",
+    description: [
+      "Edit a recurring client's profile. Only `client_id` is required;",
+      "any field you don't pass is left untouched.",
+      "",
+      "Special behaviors:",
+      "  - `home_address`: when changed from a non-null prior value, the",
+      "    old address is automatically pushed onto `previous_addresses`",
+      "    (a JSON array of {address, moved_at} entries) so we never lose",
+      "    a client's address history.",
+      "  - `notes` is APPENDED (timestamped), never overwrites.",
+      "  - Setting `status` to 'inactive' is allowed but returns a warning.",
+      "  - `default_billing` enum values: cash | card | zelle | net_15 |",
+      "    net_30 | company_billing.",
+      "",
+      "PII redaction is automatic: phone, email, and home_address are",
+      "masked in the dashboard activity feed; full values are stored in",
+      "the audit table.",
+      "",
+      "Response shape: { client_id, before, after, changed_fields,",
+      "audit_id, warnings }.",
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        client_id: {
+          type: "string",
+          description: "UUID of the client to edit. Required.",
+        },
+        name: {
+          type: "string",
+          description: "Rare — for typo fixes only.",
+        },
+        phone: { type: "string" },
+        email: { type: "string" },
+        default_billing: {
+          type: "string",
+          enum: [
+            "cash",
+            "card",
+            "zelle",
+            "net_15",
+            "net_30",
+            "company_billing",
+          ],
+        },
+        home_address: {
+          type: "string",
+          description:
+            "New primary home address. Prior non-null value is moved into previous_addresses with a timestamp.",
+        },
+        status: {
+          type: "string",
+          enum: ["active", "inactive"],
+          description:
+            "Setting to 'inactive' is allowed but returns a warning.",
+        },
+        notes: {
+          type: "string",
+          description:
+            "APPENDED to the existing notes with a timestamp prefix, never overwrites.",
+        },
+      },
+      required: ["client_id"],
+    },
+  },
+  {
+    name: "link_ride_to_client",
+    description: [
+      "Retroactively link a ride to a recurring client when the ride was",
+      "created with client_id = null. Use this to clean up orphan rides.",
+      "",
+      "Only the `client_id` field on the ride is updated; nothing else",
+      "changes.",
+      "",
+      "Refuses to overwrite an existing non-null client_id unless you",
+      "pass `force: true`. The 409 response includes the current",
+      "client_id and name so you can confirm before re-linking.",
+      "",
+      "PII redaction is automatic for the activity feed; full values are",
+      "stored in the audit table.",
+      "",
+      "Response shape: { ride_id, before, after, changed_fields,",
+      "audit_id, warnings }.",
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        ride_id: {
+          type: "string",
+          description: "UUID of the ride to link. Required.",
+        },
+        client_id: {
+          type: "string",
+          description: "UUID of the client to link the ride to. Required.",
+        },
+        force: {
+          type: "boolean",
+          description:
+            "Required true to overwrite a ride that already has a non-null client_id.",
+        },
+      },
+      required: ["ride_id", "client_id"],
+    },
+  },
 ] as const;
 
 type ToolName = (typeof TOOL_SCHEMAS)[number]["name"];
@@ -315,6 +435,10 @@ export async function executeTool(
         return ok(await updateRideStatus(args, env, ctx));
       case "update_ride":
         return ok(await updateRide(args, env, ctx));
+      case "update_client":
+        return ok(await updateClient(args, env, ctx));
+      case "link_ride_to_client":
+        return ok(await linkRideToClient(args, env, ctx));
       case "find_or_create_client":
         return ok(await findOrCreateClient(args, env));
       case "list_drivers":
@@ -1085,5 +1209,305 @@ function buildHumanMessage(
   if (changedFields.includes("vehicle_id")) extra.push("vehicle reassigned");
   const base = summarizeRideChanges(passenger, changes);
   return extra.length ? `${base} (${extra.join(", ")})` : base;
+}
+
+// ── update_client ─────────────────────────────────────────────────────
+//
+// Mirrors update_ride's pipeline. The big special case is `home_address`:
+// when it changes from a non-null prior value, the old address is
+// appended to `previous_addresses` (a JSON array stored as text on the
+// row) so the client's address history is never lost.
+async function updateClient(
+  args: Record<string, unknown>,
+  env: Env,
+  ctx: ToolContext,
+) {
+  const sb = adminClient(env);
+  const client_id = s(args.client_id);
+  if (!client_id) {
+    throw new ToolError(400, "client_id is required.");
+  }
+
+  if (args.default_billing !== undefined) {
+    const v = s(args.default_billing);
+    if (!v || !(BILLING_TERMS as readonly string[]).includes(v)) {
+      throw new ToolError(400, "Invalid default_billing.", {
+        valid_values: BILLING_TERMS,
+      });
+    }
+  }
+  if (args.status !== undefined) {
+    const v = s(args.status);
+    if (!v || !(CLIENT_STATUSES as readonly string[]).includes(v)) {
+      throw new ToolError(400, "Invalid status.", {
+        valid_values: CLIENT_STATUSES,
+      });
+    }
+  }
+
+  const { data: current, error: loadErr } = await sb
+    .from("clients")
+    .select("*")
+    .eq("id", client_id)
+    .maybeSingle();
+  if (loadErr) throw new ToolError(500, loadErr.message);
+  if (!current) {
+    throw new ToolError(404, `Client not found: ${client_id}`);
+  }
+
+  const patch: Record<string, unknown> = {};
+  if (args.name !== undefined) patch.name = s(args.name) ?? null;
+  if (args.phone !== undefined) patch.phone = s(args.phone) ?? null;
+  if (args.email !== undefined) patch.email = s(args.email) ?? null;
+  if (args.default_billing !== undefined)
+    patch.default_billing = s(args.default_billing);
+  if (args.status !== undefined) patch.status = s(args.status);
+
+  // The single most important behavior in this tool: never lose a
+  // client's prior address. If the new home_address is different from
+  // a non-null existing value, the old value is archived in
+  // previous_addresses with a timestamp.
+  if (args.home_address !== undefined) {
+    const newAddr = s(args.home_address) ?? null;
+    const oldAddr = (current as Record<string, unknown>).home_address as
+      | string
+      | null
+      | undefined;
+    if (newAddr !== (oldAddr ?? null)) {
+      patch.home_address = newAddr;
+      if (oldAddr) {
+        const history = parseAddressHistory(
+          (current as Record<string, unknown>).previous_addresses,
+        );
+        history.push({ address: oldAddr, moved_at: new Date().toISOString() });
+        patch.previous_addresses = JSON.stringify(history);
+      }
+    }
+  }
+
+  if (args.notes !== undefined) {
+    const newNote = s(args.notes);
+    if (newNote) {
+      const stamp = noteTimestamp();
+      const existing = (current as Record<string, unknown>).notes as
+        | string
+        | null
+        | undefined;
+      const appended = existing
+        ? `${existing}\n[${stamp}] ${newNote}`
+        : `[${stamp}] ${newNote}`;
+      patch.notes = appended;
+    }
+  }
+
+  const changed_fields: string[] = [];
+  for (const field of UPDATABLE_CLIENT_FIELDS) {
+    if (!(field in patch)) continue;
+    const before = (current as Record<string, unknown>)[field];
+    const after = patch[field];
+    if (!sameValue(before, after)) {
+      changed_fields.push(field);
+    }
+  }
+
+  const warnings: string[] = [];
+  if (args.status !== undefined && s(args.status) === "inactive") {
+    if ((current as Record<string, unknown>).status !== "inactive") {
+      warnings.push(`Client status set to inactive.`);
+    }
+  }
+
+  if (changed_fields.length === 0) {
+    return {
+      client_id,
+      before: current,
+      after: current,
+      changed_fields: [],
+      audit_id: null,
+      warnings,
+    };
+  }
+
+  const humanMessage = buildClientHumanMessage(current, patch, changed_fields);
+
+  const { data: rpcData, error: rpcErr } = await sb.rpc(
+    "apply_client_update_v1",
+    {
+      p_client_id: client_id,
+      p_patch: patch,
+      p_changed_fields: changed_fields,
+      p_actor: ctx.actor,
+      p_human_message: humanMessage,
+    },
+  );
+  if (rpcErr) {
+    if (/client_not_found/.test(rpcErr.message)) {
+      throw new ToolError(404, `Client not found: ${client_id}`);
+    }
+    throw new ToolError(500, rpcErr.message);
+  }
+  const result = rpcData as {
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
+    audit_id: string;
+  };
+
+  return {
+    client_id,
+    before: result.before,
+    after: result.after,
+    changed_fields,
+    audit_id: result.audit_id,
+    warnings,
+  };
+}
+
+function parseAddressHistory(
+  raw: unknown,
+): { address: string; moved_at: string }[] {
+  if (Array.isArray(raw)) return raw as { address: string; moved_at: string }[];
+  if (typeof raw !== "string" || raw.trim() === "") return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function buildClientHumanMessage(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+  changedFields: string[],
+): string {
+  const changes: Record<string, { before: unknown; after: unknown }> = {};
+  for (const field of changedFields) {
+    if (field === "previous_addresses") continue; // implicit from home_address change
+    if (!(field in patch)) continue;
+    changes[field] = {
+      before: (current as Record<string, unknown>)[field],
+      after: patch[field],
+    };
+  }
+  const name = String(current.name ?? "client");
+  return summarizeChanges(`Client ${name}`, changes);
+}
+
+// ── link_ride_to_client ───────────────────────────────────────────────
+//
+// Retroactively sets a ride's client_id. Refuses to overwrite an
+// existing non-null value unless force=true. The 409 response surfaces
+// the current client info so the operator can confirm.
+async function linkRideToClient(
+  args: Record<string, unknown>,
+  env: Env,
+  ctx: ToolContext,
+) {
+  const sb = adminClient(env);
+  const ride_id = s(args.ride_id);
+  const client_id = s(args.client_id);
+  if (!ride_id) throw new ToolError(400, "ride_id is required.");
+  if (!client_id) throw new ToolError(400, "client_id is required.");
+  const force = args.force === true;
+
+  const { data: ride, error: rideErr } = await sb
+    .from("rides")
+    .select("*")
+    .eq("id", ride_id)
+    .maybeSingle();
+  if (rideErr) throw new ToolError(500, rideErr.message);
+  if (!ride) throw new ToolError(404, `Ride not found: ${ride_id}`);
+
+  if (ride.client_id && !force) {
+    const { data: existing } = await sb
+      .from("clients")
+      .select("id, name")
+      .eq("id", ride.client_id)
+      .maybeSingle();
+    throw new ToolError(
+      409,
+      `Ride already linked to client ${existing?.name ?? ride.client_id}. Pass force: true to overwrite.`,
+      {
+        current_client_id: ride.client_id,
+        current_client_name: existing?.name ?? null,
+      },
+    );
+  }
+
+  const { data: target, error: clientErr } = await sb
+    .from("clients")
+    .select("id, name")
+    .eq("id", client_id)
+    .maybeSingle();
+  if (clientErr) throw new ToolError(500, clientErr.message);
+  if (!target) throw new ToolError(404, `Client not found: ${client_id}`);
+
+  // Idempotence: linking to the same client_id is a no-op.
+  if (ride.client_id === client_id) {
+    return {
+      ride_id,
+      before: ride,
+      after: ride,
+      changed_fields: [],
+      audit_id: null,
+      warnings: [],
+    };
+  }
+
+  const warnings: string[] = [];
+  if (force && ride.client_id) {
+    warnings.push(
+      `Overwrote prior client_id ${ride.client_id} (force was true).`,
+    );
+  }
+
+  const passenger = String(ride.passenger_name ?? "ride");
+  const targetName = String(target.name ?? client_id);
+  const humanMessage = `${passenger}: linked to client ${targetName}.`;
+
+  const { data: rpcData, error: rpcErr } = await sb.rpc(
+    "apply_ride_link_client_v1",
+    {
+      p_ride_id: ride_id,
+      p_client_id: client_id,
+      p_actor: ctx.actor,
+      p_human_message: humanMessage,
+      p_force: force,
+    },
+  );
+  if (rpcErr) {
+    if (/ride_not_found/.test(rpcErr.message)) {
+      throw new ToolError(404, `Ride not found: ${ride_id}`);
+    }
+    if (/client_not_found/.test(rpcErr.message)) {
+      throw new ToolError(404, `Client not found: ${client_id}`);
+    }
+    const exMatch = /existing_client_id:([^:]+):(.*)/.exec(rpcErr.message);
+    if (exMatch) {
+      throw new ToolError(
+        409,
+        `Ride already linked to client ${exMatch[2]}. Pass force: true to overwrite.`,
+        {
+          current_client_id: exMatch[1],
+          current_client_name: exMatch[2] === "?" ? null : exMatch[2],
+        },
+      );
+    }
+    throw new ToolError(500, rpcErr.message);
+  }
+  const result = rpcData as {
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
+    audit_id: string;
+  };
+
+  return {
+    ride_id,
+    before: result.before,
+    after: result.after,
+    changed_fields: ["client_id"],
+    audit_id: result.audit_id,
+    warnings,
+  };
 }
 

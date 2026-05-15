@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Single shared fake DB — reset in beforeEach.
 type FakeDB = {
   rides: Record<string, any>;
+  clients: Record<string, any>;
   drivers: any[];
   vehicles: any[];
   audit: any[];
@@ -21,6 +22,7 @@ let db: FakeDB;
 function newDB(): FakeDB {
   return {
     rides: {},
+    clients: {},
     drivers: [],
     vehicles: [],
     audit: [],
@@ -47,6 +49,7 @@ function fakeSupabase() {
       const exec = async (): Promise<{ data: any; error: any }> => {
         let rows: any[];
         if (table === "rides") rows = Object.values(db.rides);
+        else if (table === "clients") rows = Object.values(db.clients);
         else if (table === "drivers") rows = db.drivers;
         else if (table === "vehicles") rows = db.vehicles;
         else if (table === "events") rows = db.events;
@@ -68,6 +71,7 @@ function fakeSupabase() {
           for (const v of arr) {
             const row = { id: cryptoRandom(), ...v };
             if (table === "rides") db.rides[row.id] = row;
+            else if (table === "clients") db.clients[row.id] = row;
             else if (table === "events") db.events.push(row);
             else if (table === "audit") db.audit.push(row);
             else if (table === "drivers") db.drivers.push(row);
@@ -239,6 +243,103 @@ function fakeSupabase() {
           error: null,
         };
       }
+      if (name === "apply_client_update_v1") {
+        const client = db.clients[args.p_client_id];
+        if (!client) {
+          return { data: null, error: { message: "client_not_found" } };
+        }
+        const before = { ...client };
+        for (const [k, v] of Object.entries(args.p_patch ?? {})) {
+          client[k] = v;
+        }
+        client.updated_at = new Date().toISOString();
+        const after = { ...client };
+        const auditRow = {
+          id: cryptoRandom(),
+          entity_type: "client",
+          entity_id: args.p_client_id,
+          action: "update",
+          changed_fields: JSON.stringify(args.p_changed_fields),
+          before_json: JSON.stringify(before),
+          after_json: JSON.stringify(after),
+          actor: args.p_actor,
+          created_at: new Date().toISOString(),
+        };
+        db.audit.push(auditRow);
+        if (args.p_human_message) {
+          db.events.push({
+            id: cryptoRandom(),
+            ride_id: null,
+            source: args.p_actor,
+            message: args.p_human_message,
+            metadata: {
+              audit_id: auditRow.id,
+              entity_type: "client",
+              entity_id: args.p_client_id,
+              changed_fields: args.p_changed_fields,
+            },
+            created_at: new Date().toISOString(),
+          });
+        }
+        return {
+          data: { before, after, audit_id: auditRow.id },
+          error: null,
+        };
+      }
+      if (name === "apply_ride_link_client_v1") {
+        const ride = db.rides[args.p_ride_id];
+        if (!ride) {
+          return { data: null, error: { message: "ride_not_found" } };
+        }
+        if (ride.client_id && !args.p_force) {
+          const existing = db.clients[ride.client_id];
+          return {
+            data: null,
+            error: {
+              message: `existing_client_id:${ride.client_id}:${existing?.name ?? "?"}`,
+            },
+          };
+        }
+        const target = db.clients[args.p_client_id];
+        if (!target) {
+          return { data: null, error: { message: "client_not_found" } };
+        }
+        const before = { ...ride };
+        ride.client_id = args.p_client_id;
+        ride.updated_by = args.p_actor;
+        ride.updated_at = new Date().toISOString();
+        const after = { ...ride };
+        const auditRow = {
+          id: cryptoRandom(),
+          entity_type: "ride",
+          entity_id: args.p_ride_id,
+          action: "link",
+          changed_fields: JSON.stringify(["client_id"]),
+          before_json: JSON.stringify(before),
+          after_json: JSON.stringify(after),
+          actor: args.p_actor,
+          created_at: new Date().toISOString(),
+        };
+        db.audit.push(auditRow);
+        if (args.p_human_message) {
+          db.events.push({
+            id: cryptoRandom(),
+            ride_id: args.p_ride_id,
+            source: args.p_actor,
+            message: args.p_human_message,
+            metadata: {
+              audit_id: auditRow.id,
+              changed_fields: ["client_id"],
+              force: args.p_force === true,
+            },
+            created_at: new Date().toISOString(),
+          });
+        }
+        return {
+          data: { before, after, audit_id: auditRow.id },
+          error: null,
+        };
+      }
       return { data: null, error: { message: `unmocked rpc: ${name}` } };
     },
   };
@@ -296,6 +397,28 @@ function makeRide(overrides: Partial<any> = {}) {
     ...overrides,
   };
   db.rides[id] = row;
+  return row;
+}
+
+function makeClient(overrides: Partial<any> = {}) {
+  const id = cryptoRandom();
+  const row = {
+    id,
+    name: "Greg Vazquez",
+    company: null,
+    email: "greg@example.com",
+    phone: "+1 (619) 555-1086",
+    default_billing: "card",
+    home_address: null,
+    previous_addresses: "[]",
+    status: "active",
+    notes: null,
+    preferences: {},
+    created_at: "2026-05-15T00:00:00.000Z",
+    updated_at: "2026-05-15T00:00:00.000Z",
+    ...overrides,
+  };
+  db.clients[id] = row;
   return row;
 }
 
@@ -510,6 +633,252 @@ describe("update_ride", () => {
     expect(lastVerdict?.allowed).toBe(false);
     expect(lastVerdict?.reason).toContain("per-minute");
     expect(lastVerdict?.minuteCount).toBe(101);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// Session 2: update_client + link_ride_to_client
+// ────────────────────────────────────────────────────────────────────
+
+describe("update_client", () => {
+  it("1. happy path — update phone + email; before/after correct", async () => {
+    const { executeTool } = await loadTools();
+    const client = makeClient();
+
+    const res = await executeTool(
+      "update_client",
+      {
+        client_id: client.id,
+        phone: "+1 (310) 555-7777",
+        email: "greg@newdomain.com",
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.client_id).toBe(client.id);
+    expect(body.before.phone).toBe("+1 (619) 555-1086");
+    expect(body.after.phone).toBe("+1 (310) 555-7777");
+    expect(body.before.email).toBe("greg@example.com");
+    expect(body.after.email).toBe("greg@newdomain.com");
+    expect(body.changed_fields).toContain("phone");
+    expect(body.changed_fields).toContain("email");
+    expect(body.audit_id).toBeTruthy();
+
+    expect(db.audit).toHaveLength(1);
+    expect(db.audit[0].entity_type).toBe("client");
+    expect(db.audit[0].actor).toBe("mcp:claude");
+    expect(db.events).toHaveLength(1);
+  });
+
+  it("2. address change preserves history — old goes into previous_addresses with timestamp", async () => {
+    const { executeTool } = await loadTools();
+    const oldAddr = "1 Cape Danbury, Newport Beach, CA 92625";
+    const newAddr = "555 Ocean Blvd, Laguna Beach, CA 92651";
+    const client = makeClient({ home_address: oldAddr });
+
+    const res = await executeTool(
+      "update_client",
+      { client_id: client.id, home_address: newAddr },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.after.home_address).toBe(newAddr);
+    expect(body.changed_fields).toContain("home_address");
+    expect(body.changed_fields).toContain("previous_addresses");
+
+    const history = JSON.parse(body.after.previous_addresses as string);
+    expect(history).toHaveLength(1);
+    expect(history[0].address).toBe(oldAddr);
+    expect(typeof history[0].moved_at).toBe("string");
+    expect(new Date(history[0].moved_at).toString()).not.toBe("Invalid Date");
+  });
+
+  it("3. no-op — only client_id, changed_fields is []", async () => {
+    const { executeTool } = await loadTools();
+    const client = makeClient();
+    const res = await executeTool(
+      "update_client",
+      { client_id: client.id },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.changed_fields).toEqual([]);
+    expect(body.audit_id).toBeNull();
+    expect(db.audit).toHaveLength(0);
+    expect(db.events).toHaveLength(0);
+  });
+
+  it("4. not found — bad client_id returns 404", async () => {
+    const { executeTool } = await loadTools();
+    const res = await executeTool(
+      "update_client",
+      { client_id: "00000000-0000-0000-0000-000000000000" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBe(true);
+    const body = parseResult(res);
+    expect(body.status).toBe(404);
+    expect(body.error).toContain("not found");
+  });
+
+  it("5. invalid default_billing enum returns 400 with valid values", async () => {
+    const { executeTool } = await loadTools();
+    const client = makeClient();
+    const res = await executeTool(
+      "update_client",
+      { client_id: client.id, default_billing: "bitcoin" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBe(true);
+    const body = parseResult(res);
+    expect(body.status).toBe(400);
+    expect(body.valid_values).toContain("cash");
+    expect(body.valid_values).toContain("company_billing");
+  });
+
+  it("6. PII redaction — activity feed redacts phone/email/address; audit has full values", async () => {
+    const { executeTool } = await loadTools();
+    const client = makeClient({
+      home_address: "1 Cape Danbury, Newport Beach, CA 92625",
+    });
+    await executeTool(
+      "update_client",
+      {
+        client_id: client.id,
+        phone: "+1 (310) 555-9999",
+        email: "newmail@gmail.com",
+        home_address: "55 Beach Rd, Laguna Beach, CA 92651",
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(db.events).toHaveLength(1);
+    const feedMsg = db.events[0].message as string;
+    // phone: only last 4
+    expect(feedMsg).toContain("***-***-9999");
+    expect(feedMsg).not.toContain("310");
+    expect(feedMsg).not.toContain("5559999");
+    // email: first letter + domain
+    expect(feedMsg).toContain("n***@gmail.com");
+    expect(feedMsg).not.toContain("newmail@gmail.com");
+    // home_address: city + state only
+    expect(feedMsg).toContain("Laguna Beach, CA");
+    expect(feedMsg).not.toContain("55 Beach Rd");
+    expect(feedMsg).not.toContain("92651");
+
+    // Audit has full unredacted values.
+    const after = JSON.parse(db.audit[0].after_json);
+    expect(after.phone).toBe("+1 (310) 555-9999");
+    expect(after.email).toBe("newmail@gmail.com");
+    expect(after.home_address).toBe("55 Beach Rd, Laguna Beach, CA 92651");
+  });
+});
+
+describe("link_ride_to_client", () => {
+  it("7. happy path — orphan ride (client_id=null) gets linked", async () => {
+    const { executeTool } = await loadTools();
+    const client = makeClient({ name: "Kevin Morgan" });
+    const ride = makeRide({ client_id: null });
+
+    const res = await executeTool(
+      "link_ride_to_client",
+      { ride_id: ride.id, client_id: client.id },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.before.client_id).toBeNull();
+    expect(body.after.client_id).toBe(client.id);
+    expect(body.changed_fields).toEqual(["client_id"]);
+    expect(body.audit_id).toBeTruthy();
+    expect(body.warnings).toEqual([]);
+
+    expect(db.audit).toHaveLength(1);
+    expect(db.audit[0].entity_type).toBe("ride");
+    expect(db.audit[0].action).toBe("link");
+    expect(db.events).toHaveLength(1);
+    expect(db.events[0].message).toContain("Kevin Morgan");
+  });
+
+  it("8. refuses to overwrite — existing client_id, no force → 409", async () => {
+    const { executeTool } = await loadTools();
+    const oldClient = makeClient({ name: "Old Linked Client" });
+    const newClient = makeClient({ name: "Different Person" });
+    const ride = makeRide({ client_id: oldClient.id });
+
+    const res = await executeTool(
+      "link_ride_to_client",
+      { ride_id: ride.id, client_id: newClient.id },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBe(true);
+    const body = parseResult(res);
+    expect(body.status).toBe(409);
+    expect(body.current_client_id).toBe(oldClient.id);
+    expect(body.current_client_name).toBe("Old Linked Client");
+    expect(body.error).toContain("force");
+    // Ride should NOT have been updated.
+    expect(db.rides[ride.id].client_id).toBe(oldClient.id);
+    expect(db.audit).toHaveLength(0);
+  });
+
+  it("9. force=true overwrites and logs a warning", async () => {
+    const { executeTool } = await loadTools();
+    const oldClient = makeClient({ name: "Old Linked Client" });
+    const newClient = makeClient({ name: "New Linked Client" });
+    const ride = makeRide({ client_id: oldClient.id });
+
+    const res = await executeTool(
+      "link_ride_to_client",
+      { ride_id: ride.id, client_id: newClient.id, force: true },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.after.client_id).toBe(newClient.id);
+    expect(body.warnings.length).toBeGreaterThanOrEqual(1);
+    expect(body.warnings[0]).toContain("force");
+    expect(db.audit).toHaveLength(1);
+    expect(db.events[0].metadata.force).toBe(true);
+  });
+
+  it("10. bad client_id → 404", async () => {
+    const { executeTool } = await loadTools();
+    const ride = makeRide({ client_id: null });
+
+    const res = await executeTool(
+      "link_ride_to_client",
+      {
+        ride_id: ride.id,
+        client_id: "00000000-0000-0000-0000-000000000000",
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBe(true);
+    const body = parseResult(res);
+    expect(body.status).toBe(404);
+    expect(body.error).toContain("Client not found");
+    expect(db.rides[ride.id].client_id).toBeNull();
+    expect(db.audit).toHaveLength(0);
   });
 });
 
