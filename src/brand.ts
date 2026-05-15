@@ -63,6 +63,36 @@ export const brand = {
     },
   ],
 
+  // Why-us pillars (4 trust pillars, no photos — pure typography)
+  pillars: [
+    {
+      title: "Vetted chauffeurs",
+      body: "Every driver is background-checked, drug-tested, and trained in concierge-level service. No rideshare pool.",
+    },
+    {
+      title: "Punctuality, guaranteed",
+      body: "We track your flight or schedule end-to-end. If a delay is on our side, the next ride is on us.",
+    },
+    {
+      title: "Transparent pricing",
+      body: "Quote up-front. No surge, no hidden surcharges, no per-minute meter. The price you see is the price you pay.",
+    },
+    {
+      title: "24/7 dispatch",
+      body: "A real dispatcher answers — not a chatbot. Reach us by phone or text at any hour, any day.",
+    },
+  ],
+
+  // App promo section
+  appPromo: {
+    eyebrow: "Take it with you",
+    headline: "Your driver in your pocket.",
+    body:
+      "Install the app for one-tap booking, live driver tracking, and trip receipts. " +
+      "Works offline once installed; no app store required.",
+    cta: "Install on your phone",
+  },
+
   // How-it-works steps (landing page)
   steps: [
     {
