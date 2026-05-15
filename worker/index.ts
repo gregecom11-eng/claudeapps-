@@ -1,15 +1,17 @@
 // Cloudflare Worker entry. Routes:
 //   GET  /health                 → ok (sanity check)
 //   POST /api/mcp                → MCP JSON-RPC, with `Authorization: Bearer <key>`
-//   POST /api/mcp/<key>          → MCP JSON-RPC, key in path (for clients
-//                                   that can't set headers, e.g. Claude.ai
-//                                   personal-account custom connectors)
+//   POST /api/mcp/<key>          → MCP JSON-RPC, key in path (DEPRECATED;
+//                                   accepted until 2026-05-22 for backward
+//                                   compatibility, with a Deprecation header).
 //   anything else                → static asset fallthrough (the dashboard SPA)
 
+import { authenticate } from "./auth";
 import { runScheduled } from "./cron";
 import { handleGenerateRequest } from "./generate";
 import { handleInviteRequest } from "./invite";
 import { handleMcpRequest } from "./mcp";
+import { checkRateLimit } from "./rate-limit";
 import {
   handleSubscribe,
   handleTestSend,
@@ -23,6 +25,9 @@ export type Env = {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   MCP_API_KEY: string;
+  // Optional second token for the dashboard's own write paths.
+  // Maps to actor identifier "dashboard:greg" in worker/auth.ts.
+  DASHBOARD_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_MODEL?: string;
   VAPID_PUBLIC_KEY?: string;
@@ -142,19 +147,47 @@ export default {
           { status: 405, headers: corsHeaders() },
         );
       }
-      const pathKey = pathMatch[1];
-      const headerAuth = request.headers.get("authorization") ?? "";
-      const headerKey = headerAuth.startsWith("Bearer ")
-        ? headerAuth.slice(7).trim()
-        : null;
-      const provided = pathKey ?? headerKey;
-      if (!env.MCP_API_KEY || provided !== env.MCP_API_KEY) {
+      const pathKey = pathMatch[1] ?? null;
+      const auth = authenticate(request, env, pathKey);
+      if (!auth.ok) {
         return Response.json(
-          { error: "unauthorized" },
+          { error: auth.error, status: 401 },
           { status: 401, headers: corsHeaders() },
         );
       }
-      return handleMcpRequest(request, env);
+
+      // Rate-limit per actor. 100/min, 2,000/hr (configured in the RPC).
+      const rl = await checkRateLimit(env, auth.actor);
+      if (!rl.allowed) {
+        return Response.json(
+          {
+            error: rl.reason ?? "rate limit exceeded",
+            status: 429,
+            minute_count: rl.minuteCount,
+            hour_count: rl.hourCount,
+          },
+          {
+            status: 429,
+            headers: {
+              ...corsHeaders(),
+              "retry-after": String(Math.max(1, rl.retryAfterSeconds)),
+            },
+          },
+        );
+      }
+
+      const extraHeaders: HeadersInit = {};
+      if (auth.viaUrl && auth.deprecationWarning) {
+        extraHeaders["deprecation"] = "true";
+        extraHeaders["warning"] = `299 - "${auth.deprecationWarning}"`;
+        extraHeaders["sunset"] = "Fri, 22 May 2026 00:00:00 GMT";
+      }
+      return handleMcpRequest(
+        request,
+        env,
+        { actor: auth.actor },
+        extraHeaders,
+      );
     }
 
     // Everything else → the dashboard SPA / its assets.

@@ -40,7 +40,107 @@ show errors when it polls.
 | `npm run build`   | Type-check + production build to `dist/`         |
 | `npm run preview` | Preview the production build                      |
 | `npm run typecheck` | TypeScript only, no emit                        |
+| `npm run test`    | Run the worker test suite (vitest)               |
 | `npm run seed`    | Print mock data JSON (use to bootstrap settings) |
+
+## MCP server
+
+This deployment also exposes an MCP (Model Context Protocol) endpoint so
+Claude — or any MCP-aware client — can read and edit ride data through
+typed tools. Available tools: `create_ride`, `update_ride`,
+`update_ride_status`, `list_rides`, `find_or_create_client`,
+`list_drivers`, `list_vehicles`, `log_activity`.
+
+### Authentication
+
+The Worker authenticates every MCP call against a per-caller token kept
+in Cloudflare Workers secrets. **Preferred** transport is an
+`Authorization: Bearer <token>` header:
+
+```http
+POST /api/mcp HTTP/1.1
+Host: claudeapps-1.gregecom11.workers.dev
+Authorization: Bearer <YOUR_TOKEN>
+Content-Type: application/json
+```
+
+The legacy `POST /api/mcp/<token>` path is still accepted for backward
+compatibility **until 2026-05-22**. Responses sent over that path carry
+`Deprecation: true`, an explanatory `Warning` header, and a
+`Sunset: Fri, 22 May 2026 00:00:00 GMT` header. After the sunset, that
+path will start returning 401 and only the header form will be honored.
+
+Each token maps to an actor identifier (`mcp:claude` for the canonical
+Claude MCP token, `dashboard:greg` for the dashboard's own writes). The
+actor is recorded on every write (`rides.updated_by`, `audit.actor`,
+`events.source`); a request that doesn't match a known token is rejected
+with 401 before any data is read.
+
+To rotate the token:
+
+```bash
+npx wrangler secret put MCP_API_KEY
+# paste new value
+```
+
+To add an additional caller:
+
+```bash
+npx wrangler secret put DASHBOARD_API_KEY
+```
+
+### Rate limits
+
+Each actor is capped at **100 requests/minute** and **2,000
+requests/hour**. Exceeding either returns HTTP 429 with a
+`Retry-After` header. Counters live in `mcp_rate_limits` (Postgres) and
+are evaluated by the `check_and_increment_rate_limit` RPC.
+
+### PII redaction (activity feed)
+
+The dashboard activity feed (`events` table) shows redacted versions of
+sensitive fields:
+
+| field             | feed display                |
+| ----------------- | --------------------------- |
+| phone numbers     | `***-***-1086` (last 4 only) |
+| email addresses   | `g***@gmail.com` (initial + domain) |
+| home / pickup addresses | `Newport Beach, CA` (city + state) |
+| flight numbers    | shown as-is — not PII       |
+| names             | shown as-is — operator needs to read them |
+
+The **audit table** (`audit`) stores the FULL pre- and post-change row
+JSON without redaction (Supabase encrypts at rest). It is the canonical
+record of what happened; the activity feed is just a human-readable
+mirror with PII removed.
+
+Owner-only read access is enforced via RLS (`audit_owner_read`); the
+Worker writes via the service role.
+
+### Response cap
+
+All list-style tools (`list_rides`, `list_drivers`, `list_vehicles`)
+return **at most 50 rows per call**. When more rows exist, the response
+includes `has_more: true` and a `next_cursor` opaque string; pass that
+`cursor` argument on the next call to continue. This prevents a single
+compromised request from dumping the database.
+
+### Audit table
+
+| column          | type   | notes                                  |
+| --------------- | ------ | -------------------------------------- |
+| `id`            | uuid   | primary key                            |
+| `entity_type`   | text   | `ride` / `client` / `driver`           |
+| `entity_id`     | uuid   | id of the affected row                 |
+| `action`        | text   | `update` / `create` / `link`           |
+| `changed_fields`| text   | JSON array of field names              |
+| `before_json`   | text   | full row snapshot pre-change           |
+| `after_json`    | text   | full row snapshot post-change          |
+| `actor`         | text   | e.g. `mcp:claude`, `dashboard:greg`    |
+| `created_at`    | timestamptz | UTC                              |
+
+Inserts go through `apply_ride_update_v1` so the ride update + audit row
++ activity event are written in one transaction.
 
 ## Deploy
 

@@ -2,7 +2,7 @@
 // Handles initialize, tools/list, tools/call, plus list-stubs Claude probes.
 
 import { corsHeaders, type Env } from "./index";
-import { TOOL_SCHEMAS, executeTool } from "./tools";
+import { TOOL_SCHEMAS, executeTool, type ToolContext } from "./tools";
 
 type JsonRpcReq = {
   jsonrpc: "2.0";
@@ -25,32 +25,38 @@ const SERVER_INFO = { name: "sdluxury-ops", version: "0.2.0" };
 export async function handleMcpRequest(
   request: Request,
   env: Env,
+  ctx: ToolContext,
+  extraHeaders: HeadersInit = {},
 ): Promise<Response> {
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return jsonResponse(errorRes(null, -32700, "Parse error"));
+    return jsonResponse(errorRes(null, -32700, "Parse error"), 200, extraHeaders);
   }
 
   if (Array.isArray(body)) {
     const responses = await Promise.all(
-      body.map((req) => handleSingle(req as JsonRpcReq, env)),
+      body.map((req) => handleSingle(req as JsonRpcReq, env, ctx)),
     );
     const filtered = responses.filter((r): r is JsonRpcRes => r !== null);
-    return jsonResponse(filtered);
+    return jsonResponse(filtered, 200, extraHeaders);
   }
 
-  const res = await handleSingle(body as JsonRpcReq, env);
+  const res = await handleSingle(body as JsonRpcReq, env, ctx);
   if (res === null) {
-    return new Response(null, { status: 202, headers: corsHeaders() });
+    return new Response(null, {
+      status: 202,
+      headers: { ...corsHeaders(), ...extraHeaders },
+    });
   }
-  return jsonResponse(res);
+  return jsonResponse(res, 200, extraHeaders);
 }
 
 async function handleSingle(
   req: JsonRpcReq,
   env: Env,
+  ctx: ToolContext,
 ): Promise<JsonRpcRes | null> {
   if (!req || req.jsonrpc !== "2.0" || typeof req.method !== "string") {
     return errorRes(req?.id ?? null, -32600, "Invalid Request");
@@ -92,6 +98,7 @@ async function handleSingle(
           params.name,
           params.arguments ?? {},
           env,
+          ctx,
         );
         return okRes(req.id ?? null, result);
       }
@@ -131,12 +138,17 @@ function errorRes(
   return { jsonrpc: "2.0", id, error: { code, message, data } };
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  extra: HeadersInit = {},
+): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
       ...corsHeaders(),
+      ...extra,
     },
   });
 }
