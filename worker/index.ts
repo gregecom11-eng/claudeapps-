@@ -1,9 +1,10 @@
 // Cloudflare Worker entry. Routes:
 //   GET  /health                 → ok (sanity check)
 //   POST /api/mcp                → MCP JSON-RPC, with `Authorization: Bearer <key>`
-//   POST /api/mcp/<key>          → MCP JSON-RPC, key in path (DEPRECATED;
-//                                   accepted until 2026-05-22 for backward
-//                                   compatibility, with a Deprecation header).
+//   POST /api/mcp/<key>          → MCP JSON-RPC, key in path. Equally
+//                                   first-class; used by clients that
+//                                   can't set headers (Claude.ai custom
+//                                   connectors).
 //   anything else                → static asset fallthrough (the dashboard SPA)
 
 import { authenticate } from "./auth";
@@ -176,17 +177,10 @@ export default {
         );
       }
 
-      const extraHeaders: HeadersInit = {};
-      if (auth.viaUrl && auth.deprecationWarning) {
-        extraHeaders["deprecation"] = "true";
-        extraHeaders["warning"] = `299 - "${auth.deprecationWarning}"`;
-        extraHeaders["sunset"] = "Fri, 22 May 2026 00:00:00 GMT";
-      }
       return handleMcpRequest(
         request,
         env,
         { actor: auth.actor },
-        extraHeaders,
       );
     }
 

@@ -1,17 +1,22 @@
 // Token → actor mapping for MCP / dashboard writes.
 //
-// Auth header (preferred):    `Authorization: Bearer <token>`
-// URL path (deprecated):      `/api/mcp/<token>`  ← will be removed; emits a
-//                             warning until then.
+// Two equivalent auth transports:
+//   - Authorization: Bearer <token> header  (preferred for clients that
+//                                            can set headers — Claude
+//                                            Desktop, custom scripts)
+//   - URL path:  /api/mcp/<token>            (for clients that can ONLY
+//                                            supply a URL, e.g. Claude.ai
+//                                            personal-account custom
+//                                            connectors)
 //
-// Each token maps to an actor identifier (e.g. "mcp:claude") that is
-// recorded on every write the request triggers (audit.actor,
-// rides.updated_by, events.source).
+// Both are first-class. Token is matched against secrets to resolve an
+// actor identifier (e.g. "mcp:claude") that's recorded on every write
+// (audit.actor, rides.updated_by, events.source).
 
 import type { Env } from "./index";
 
 export type AuthResult =
-  | { ok: true; actor: string; viaUrl: boolean; deprecationWarning?: string }
+  | { ok: true; actor: string; viaUrl: boolean }
   | { ok: false; status: 401; error: string };
 
 // Map a token to an actor identifier by checking it against each
@@ -58,16 +63,7 @@ export function authenticate(
   const actor = resolveActor(env, token);
   if (!actor) return { ok: false, status: 401, error: "invalid token" };
 
-  if (viaUrl) {
-    return {
-      ok: true,
-      actor,
-      viaUrl: true,
-      deprecationWarning:
-        "URL-token auth is deprecated. Send `Authorization: Bearer <token>` instead. This path will stop accepting tokens on or after 2026-05-22.",
-    };
-  }
-  return { ok: true, actor, viaUrl: false };
+  return { ok: true, actor, viaUrl };
 }
 
 // Constant-time string comparison to avoid leaking secret length through

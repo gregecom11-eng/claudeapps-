@@ -26,13 +26,12 @@ export async function handleMcpRequest(
   request: Request,
   env: Env,
   ctx: ToolContext,
-  extraHeaders: HeadersInit = {},
 ): Promise<Response> {
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return jsonResponse(errorRes(null, -32700, "Parse error"), 200, extraHeaders);
+    return jsonResponse(errorRes(null, -32700, "Parse error"));
   }
 
   if (Array.isArray(body)) {
@@ -40,17 +39,14 @@ export async function handleMcpRequest(
       body.map((req) => handleSingle(req as JsonRpcReq, env, ctx)),
     );
     const filtered = responses.filter((r): r is JsonRpcRes => r !== null);
-    return jsonResponse(filtered, 200, extraHeaders);
+    return jsonResponse(filtered);
   }
 
   const res = await handleSingle(body as JsonRpcReq, env, ctx);
   if (res === null) {
-    return new Response(null, {
-      status: 202,
-      headers: { ...corsHeaders(), ...extraHeaders },
-    });
+    return new Response(null, { status: 202, headers: corsHeaders() });
   }
-  return jsonResponse(res, 200, extraHeaders);
+  return jsonResponse(res);
 }
 
 async function handleSingle(
@@ -138,17 +134,12 @@ function errorRes(
   return { jsonrpc: "2.0", id, error: { code, message, data } };
 }
 
-function jsonResponse(
-  body: unknown,
-  status = 200,
-  extra: HeadersInit = {},
-): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
       ...corsHeaders(),
-      ...extra,
     },
   });
 }

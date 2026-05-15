@@ -54,8 +54,9 @@ typed tools. Available tools: `create_ride`, `update_ride`,
 ### Authentication
 
 The Worker authenticates every MCP call against a per-caller token kept
-in Cloudflare Workers secrets. **Preferred** transport is an
-`Authorization: Bearer <token>` header:
+in Cloudflare Workers secrets. Two equivalent transports are supported:
+
+**Header form (preferred for any client that can set headers):**
 
 ```http
 POST /api/mcp HTTP/1.1
@@ -64,11 +65,16 @@ Authorization: Bearer <YOUR_TOKEN>
 Content-Type: application/json
 ```
 
-The legacy `POST /api/mcp/<token>` path is still accepted for backward
-compatibility **until 2026-05-22**. Responses sent over that path carry
-`Deprecation: true`, an explanatory `Warning` header, and a
-`Sunset: Fri, 22 May 2026 00:00:00 GMT` header. After the sunset, that
-path will start returning 401 and only the header form will be honored.
+**URL-token form (for Claude.ai custom connectors and any client that
+can only supply a URL):**
+
+```
+POST /api/mcp/<YOUR_TOKEN>
+```
+
+Both forms are first-class and will remain supported. The URL form is
+the only option for Claude.ai personal-account custom connectors, which
+don't expose a way to set headers.
 
 Each token maps to an actor identifier (`mcp:claude` for the canonical
 Claude MCP token, `dashboard:greg` for the dashboard's own writes). The
