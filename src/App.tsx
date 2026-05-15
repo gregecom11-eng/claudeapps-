@@ -7,6 +7,10 @@ import { Notify } from "./components/Notify";
 import { useAuth, AuthProvider } from "./lib/auth";
 import { Login } from "./routes/Login";
 
+const Landing = lazy(() =>
+  import("./routes/Landing").then((m) => ({ default: m.Landing })),
+);
+
 const Book = lazy(() => import("./routes/Book").then((m) => ({ default: m.Book })));
 const Calendar = lazy(() =>
   import("./routes/Calendar").then((m) => ({ default: m.Calendar })),
@@ -105,8 +109,12 @@ function Gate() {
     );
   }
   if (!session) {
+    // Public marketing landing at `/`; everything else falls through
+    // to the login screen so deep links still funnel into auth.
     return (
       <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
         <Route path="*" element={<Login />} />
       </Routes>
     );
