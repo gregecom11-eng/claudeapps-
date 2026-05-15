@@ -63,7 +63,19 @@ const UPDATABLE_CLIENT_FIELDS = [
   "notes",
 ] as const;
 
+// Order used for the changed_fields output of update_driver.
+const UPDATABLE_DRIVER_FIELDS = [
+  "full_name",
+  "phone",
+  "email",
+  "default_split",
+  "vehicle_name",
+  "status",
+  "notes",
+] as const;
+
 const CLIENT_STATUSES = ["active", "inactive"] as const;
+const DRIVER_STATUSES = ["active", "inactive"] as const;
 
 export const TOOL_SCHEMAS = [
   {
@@ -408,6 +420,97 @@ export const TOOL_SCHEMAS = [
       required: ["ride_id", "client_id"],
     },
   },
+  {
+    name: "add_driver",
+    description: [
+      "Create a new driver record. Only `full_name` is required.",
+      "",
+      "Duplicate prevention: before inserting, the tool searches the",
+      "drivers table for an existing record whose full_name matches",
+      "case-insensitively and ignoring extra whitespace. If found, it",
+      "returns 409 Conflict with the existing row attached so the caller",
+      "can decide whether to use `update_driver` instead. Use this tool",
+      "to register a new driver who isn't in the system yet (e.g. Carlos",
+      "Garcia); use `update_driver` to modify someone who already is.",
+      "",
+      "Defaults: `status` falls back to 'active'. The legacy `active`",
+      "boolean is kept in sync with `status` so existing driver lookups",
+      "keep working.",
+      "",
+      "Response shape: { driver_id, driver, audit_id, warnings }.",
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        full_name: {
+          type: "string",
+          description: "Driver's full name. Required.",
+        },
+        phone: { type: "string" },
+        email: { type: "string" },
+        default_split: {
+          type: "number",
+          description: "Default revenue split percentage, e.g. 70 means 70%.",
+        },
+        vehicle_name: {
+          type: "string",
+          description: "Their usual vehicle (free text, not a foreign key).",
+        },
+        status: {
+          type: "string",
+          enum: ["active", "inactive"],
+          description: "Defaults to 'active'.",
+        },
+        notes: { type: "string" },
+      },
+      required: ["full_name"],
+    },
+  },
+  {
+    name: "update_driver",
+    description: [
+      "Edit an existing driver's profile. Only `driver_id` is required;",
+      "any field you don't pass is left untouched.",
+      "",
+      "Special behaviors:",
+      "  - `notes` is APPENDED (timestamped), never overwritten.",
+      "  - Setting `status` to 'inactive' returns a warning and also",
+      "    flips the legacy `active` boolean to false, so the driver",
+      "    won't show up in driver pickers.",
+      "",
+      "PII redaction is automatic for the activity feed (phone last 4,",
+      "email first letter + domain); the audit table stores full values.",
+      "",
+      "Response shape: { driver_id, before, after, changed_fields,",
+      "audit_id, warnings }.",
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        driver_id: {
+          type: "string",
+          description: "UUID of the driver to edit. Required.",
+        },
+        full_name: { type: "string" },
+        phone: { type: "string" },
+        email: { type: "string" },
+        default_split: { type: "number" },
+        vehicle_name: { type: "string" },
+        status: {
+          type: "string",
+          enum: ["active", "inactive"],
+          description:
+            "Setting to 'inactive' is allowed but returns a warning.",
+        },
+        notes: {
+          type: "string",
+          description:
+            "APPENDED to the existing notes with a timestamp prefix, never overwrites.",
+        },
+      },
+      required: ["driver_id"],
+    },
+  },
 ] as const;
 
 type ToolName = (typeof TOOL_SCHEMAS)[number]["name"];
@@ -439,6 +542,10 @@ export async function executeTool(
         return ok(await updateClient(args, env, ctx));
       case "link_ride_to_client":
         return ok(await linkRideToClient(args, env, ctx));
+      case "add_driver":
+        return ok(await addDriver(args, env, ctx));
+      case "update_driver":
+        return ok(await updateDriver(args, env, ctx));
       case "find_or_create_client":
         return ok(await findOrCreateClient(args, env));
       case "list_drivers":
@@ -1511,3 +1618,247 @@ async function linkRideToClient(
   };
 }
 
+// ── add_driver ────────────────────────────────────────────────────────
+//
+// Pre-check the drivers table for a case-insensitive, whitespace-
+// normalized match on full_name. If a match exists, return 409 with
+// the existing row attached so the caller can switch to update_driver.
+// Otherwise hand off to apply_driver_create_v1 for the atomic write.
+async function addDriver(
+  args: Record<string, unknown>,
+  env: Env,
+  ctx: ToolContext,
+) {
+  const sb = adminClient(env);
+  const full_name = s(args.full_name);
+  if (!full_name) throw new ToolError(400, "full_name is required.");
+
+  if (args.status !== undefined) {
+    const v = s(args.status);
+    if (!v || !(DRIVER_STATUSES as readonly string[]).includes(v)) {
+      throw new ToolError(400, "Invalid status.", {
+        valid_values: DRIVER_STATUSES,
+      });
+    }
+  }
+
+  if (args.default_split !== undefined) {
+    const raw = args.default_split;
+    const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+    if (!Number.isFinite(n)) {
+      throw new ToolError(400, "default_split must be a number.");
+    }
+  }
+
+  const normalized = normalizeName(full_name);
+
+  // Duplicate check: pull all drivers (the table is small — ~3-10 rows)
+  // and compare normalized names. Doing it server-side here keeps the
+  // matching logic in one place and avoids ilike + collation surprises.
+  const { data: existingRows, error: dupErr } = await sb
+    .from("drivers")
+    .select("*");
+  if (dupErr) throw new ToolError(500, dupErr.message);
+  const duplicate = (existingRows ?? []).find(
+    (d: { full_name?: string }) =>
+      typeof d.full_name === "string" &&
+      normalizeName(d.full_name) === normalized,
+  );
+  if (duplicate) {
+    throw new ToolError(
+      409,
+      `Driver '${full_name}' already exists. Use update_driver to modify the existing record.`,
+      { existing_driver: duplicate },
+    );
+  }
+
+  const status = s(args.status) ?? "active";
+  const patch: Record<string, unknown> = {
+    full_name,
+    status,
+  };
+  if (args.phone !== undefined) patch.phone = s(args.phone);
+  if (args.email !== undefined) patch.email = s(args.email);
+  if (args.default_split !== undefined) {
+    const raw = args.default_split;
+    const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+    patch.default_split = n;
+  }
+  if (args.vehicle_name !== undefined)
+    patch.vehicle_name = s(args.vehicle_name);
+  if (args.notes !== undefined) patch.notes = s(args.notes);
+
+  const humanMessage = `New driver added: ${full_name}.`;
+
+  const { data: rpcData, error: rpcErr } = await sb.rpc(
+    "apply_driver_create_v1",
+    {
+      p_patch: patch,
+      p_actor: ctx.actor,
+      p_human_message: humanMessage,
+    },
+  );
+  if (rpcErr) throw new ToolError(500, rpcErr.message);
+  const result = rpcData as {
+    driver: Record<string, unknown>;
+    audit_id: string;
+  };
+
+  return {
+    driver_id: result.driver.id,
+    driver: result.driver,
+    audit_id: result.audit_id,
+    warnings: [],
+  };
+}
+
+// Lowercase + collapse all whitespace runs (incl. tabs, NBSP) into a
+// single space, trimmed. "Carlos  Garcia " and "carlos garcia" both
+// fold to "carlos garcia".
+function normalizeName(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+// ── update_driver ─────────────────────────────────────────────────────
+async function updateDriver(
+  args: Record<string, unknown>,
+  env: Env,
+  ctx: ToolContext,
+) {
+  const sb = adminClient(env);
+  const driver_id = s(args.driver_id);
+  if (!driver_id) throw new ToolError(400, "driver_id is required.");
+
+  if (args.status !== undefined) {
+    const v = s(args.status);
+    if (!v || !(DRIVER_STATUSES as readonly string[]).includes(v)) {
+      throw new ToolError(400, "Invalid status.", {
+        valid_values: DRIVER_STATUSES,
+      });
+    }
+  }
+
+  if (args.default_split !== undefined) {
+    const raw = args.default_split;
+    const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+    if (!Number.isFinite(n)) {
+      throw new ToolError(400, "default_split must be a number.");
+    }
+  }
+
+  const { data: current, error: loadErr } = await sb
+    .from("drivers")
+    .select("*")
+    .eq("id", driver_id)
+    .maybeSingle();
+  if (loadErr) throw new ToolError(500, loadErr.message);
+  if (!current) {
+    throw new ToolError(404, `Driver not found: ${driver_id}`);
+  }
+
+  const patch: Record<string, unknown> = {};
+  if (args.full_name !== undefined) patch.full_name = s(args.full_name);
+  if (args.phone !== undefined) patch.phone = s(args.phone) ?? null;
+  if (args.email !== undefined) patch.email = s(args.email) ?? null;
+  if (args.default_split !== undefined) {
+    const raw = args.default_split;
+    const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+    patch.default_split = n;
+  }
+  if (args.vehicle_name !== undefined)
+    patch.vehicle_name = s(args.vehicle_name) ?? null;
+  if (args.status !== undefined) patch.status = s(args.status);
+
+  if (args.notes !== undefined) {
+    const newNote = s(args.notes);
+    if (newNote) {
+      const stamp = noteTimestamp();
+      const existing = (current as Record<string, unknown>).notes as
+        | string
+        | null
+        | undefined;
+      const appended = existing
+        ? `${existing}\n[${stamp}] ${newNote}`
+        : `[${stamp}] ${newNote}`;
+      patch.notes = appended;
+    }
+  }
+
+  const changed_fields: string[] = [];
+  for (const field of UPDATABLE_DRIVER_FIELDS) {
+    if (!(field in patch)) continue;
+    const before = (current as Record<string, unknown>)[field];
+    const after = patch[field];
+    if (!sameValue(before, after)) {
+      changed_fields.push(field);
+    }
+  }
+
+  const warnings: string[] = [];
+  if (args.status !== undefined && s(args.status) === "inactive") {
+    if ((current as Record<string, unknown>).status !== "inactive") {
+      warnings.push(`Driver status set to inactive.`);
+    }
+  }
+
+  if (changed_fields.length === 0) {
+    return {
+      driver_id,
+      before: current,
+      after: current,
+      changed_fields: [],
+      audit_id: null,
+      warnings,
+    };
+  }
+
+  const humanMessage = buildDriverHumanMessage(current, patch, changed_fields);
+
+  const { data: rpcData, error: rpcErr } = await sb.rpc(
+    "apply_driver_update_v1",
+    {
+      p_driver_id: driver_id,
+      p_patch: patch,
+      p_changed_fields: changed_fields,
+      p_actor: ctx.actor,
+      p_human_message: humanMessage,
+    },
+  );
+  if (rpcErr) {
+    if (/driver_not_found/.test(rpcErr.message)) {
+      throw new ToolError(404, `Driver not found: ${driver_id}`);
+    }
+    throw new ToolError(500, rpcErr.message);
+  }
+  const result = rpcData as {
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
+    audit_id: string;
+  };
+
+  return {
+    driver_id,
+    before: result.before,
+    after: result.after,
+    changed_fields,
+    audit_id: result.audit_id,
+    warnings,
+  };
+}
+
+function buildDriverHumanMessage(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+  changedFields: string[],
+): string {
+  const changes: Record<string, { before: unknown; after: unknown }> = {};
+  for (const field of changedFields) {
+    if (!(field in patch)) continue;
+    changes[field] = {
+      before: (current as Record<string, unknown>)[field],
+      after: patch[field],
+    };
+  }
+  const name = String(current.full_name ?? "driver");
+  return summarizeChanges(`Driver ${name}`, changes);
+}

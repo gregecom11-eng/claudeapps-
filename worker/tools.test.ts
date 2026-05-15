@@ -340,6 +340,105 @@ function fakeSupabase() {
           error: null,
         };
       }
+      if (name === "apply_driver_create_v1") {
+        const patch = args.p_patch ?? {};
+        const status = patch.status ?? "active";
+        const row = {
+          id: cryptoRandom(),
+          full_name: patch.full_name,
+          phone: patch.phone ?? null,
+          email: patch.email ?? null,
+          default_split: patch.default_split ?? null,
+          vehicle_name: patch.vehicle_name ?? null,
+          status,
+          notes: patch.notes ?? null,
+          active: status === "active",
+          created_at: new Date().toISOString(),
+        };
+        db.drivers.push(row);
+        const auditRow = {
+          id: cryptoRandom(),
+          entity_type: "driver",
+          entity_id: row.id,
+          action: "create",
+          changed_fields: JSON.stringify([
+            "full_name",
+            "phone",
+            "email",
+            "default_split",
+            "vehicle_name",
+            "status",
+            "notes",
+          ]),
+          before_json: null,
+          after_json: JSON.stringify(row),
+          actor: args.p_actor,
+          created_at: new Date().toISOString(),
+        };
+        db.audit.push(auditRow);
+        if (args.p_human_message) {
+          db.events.push({
+            id: cryptoRandom(),
+            ride_id: null,
+            source: args.p_actor,
+            message: args.p_human_message,
+            metadata: {
+              audit_id: auditRow.id,
+              entity_type: "driver",
+              entity_id: row.id,
+              action: "create",
+            },
+            created_at: new Date().toISOString(),
+          });
+        }
+        return { data: { driver: row, audit_id: auditRow.id }, error: null };
+      }
+      if (name === "apply_driver_update_v1") {
+        const driver = db.drivers.find((d) => d.id === args.p_driver_id);
+        if (!driver) {
+          return { data: null, error: { message: "driver_not_found" } };
+        }
+        const before = { ...driver };
+        for (const [k, v] of Object.entries(args.p_patch ?? {})) {
+          driver[k] = v;
+        }
+        // Mirror the SQL: when status is in the patch, sync `active`.
+        if (args.p_patch && "status" in args.p_patch) {
+          driver.active = args.p_patch.status === "active";
+        }
+        const after = { ...driver };
+        const auditRow = {
+          id: cryptoRandom(),
+          entity_type: "driver",
+          entity_id: args.p_driver_id,
+          action: "update",
+          changed_fields: JSON.stringify(args.p_changed_fields),
+          before_json: JSON.stringify(before),
+          after_json: JSON.stringify(after),
+          actor: args.p_actor,
+          created_at: new Date().toISOString(),
+        };
+        db.audit.push(auditRow);
+        if (args.p_human_message) {
+          db.events.push({
+            id: cryptoRandom(),
+            ride_id: null,
+            source: args.p_actor,
+            message: args.p_human_message,
+            metadata: {
+              audit_id: auditRow.id,
+              entity_type: "driver",
+              entity_id: args.p_driver_id,
+              changed_fields: args.p_changed_fields,
+            },
+            created_at: new Date().toISOString(),
+          });
+        }
+        return {
+          data: { before, after, audit_id: auditRow.id },
+          error: null,
+        };
+      }
       return { data: null, error: { message: `unmocked rpc: ${name}` } };
     },
   };
@@ -419,6 +518,25 @@ function makeClient(overrides: Partial<any> = {}) {
     ...overrides,
   };
   db.clients[id] = row;
+  return row;
+}
+
+function makeDriver(overrides: Partial<any> = {}) {
+  const id = cryptoRandom();
+  const row = {
+    id,
+    full_name: "Hassan",
+    phone: null,
+    email: null,
+    default_split: null,
+    vehicle_name: null,
+    status: "active",
+    notes: null,
+    active: true,
+    created_at: "2026-05-15T00:00:00.000Z",
+    ...overrides,
+  };
+  db.drivers.push(row);
   return row;
 }
 
@@ -879,6 +997,226 @@ describe("link_ride_to_client", () => {
     expect(body.error).toContain("Client not found");
     expect(db.rides[ride.id].client_id).toBeNull();
     expect(db.audit).toHaveLength(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// Session 3: add_driver + update_driver
+// ────────────────────────────────────────────────────────────────────
+
+describe("add_driver", () => {
+  it("1. happy path — create Carlos Garcia with phone", async () => {
+    const { executeTool } = await loadTools();
+    const res = await executeTool(
+      "add_driver",
+      { full_name: "Carlos Garcia", phone: "+1 (619) 555-2222" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.driver_id).toBeTruthy();
+    expect(body.driver.full_name).toBe("Carlos Garcia");
+    expect(body.driver.phone).toBe("+1 (619) 555-2222");
+    expect(body.driver.status).toBe("active");
+    expect(body.driver.active).toBe(true);
+    expect(body.audit_id).toBeTruthy();
+    expect(body.warnings).toEqual([]);
+
+    expect(db.drivers).toHaveLength(1);
+    expect(db.drivers[0].id).toBe(body.driver_id);
+    expect(db.audit).toHaveLength(1);
+    expect(db.audit[0].entity_type).toBe("driver");
+    expect(db.audit[0].action).toBe("create");
+    expect(db.events[0].message).toContain("Carlos Garcia");
+  });
+
+  it("2. duplicate name returns 409 with existing record", async () => {
+    const { executeTool } = await loadTools();
+    const existing = makeDriver({
+      full_name: "Carlos Garcia",
+      phone: "+1 (619) 555-1234",
+    });
+
+    const res = await executeTool(
+      "add_driver",
+      { full_name: "Carlos Garcia" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBe(true);
+    const body = parseResult(res);
+    expect(body.status).toBe(409);
+    expect(body.existing_driver.id).toBe(existing.id);
+    expect(body.existing_driver.full_name).toBe("Carlos Garcia");
+    expect(body.error).toContain("update_driver");
+    // No new row created.
+    expect(db.drivers).toHaveLength(1);
+    expect(db.audit).toHaveLength(0);
+  });
+
+  it("3. case-insensitive + whitespace-tolerant duplicate detection", async () => {
+    const { executeTool } = await loadTools();
+    makeDriver({ full_name: "Carlos Garcia" });
+
+    const res = await executeTool(
+      "add_driver",
+      { full_name: "  carlos   garcia  " },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBe(true);
+    const body = parseResult(res);
+    expect(body.status).toBe(409);
+    expect(body.existing_driver.full_name).toBe("Carlos Garcia");
+    expect(db.drivers).toHaveLength(1);
+  });
+
+  it("4. minimal input — only full_name — succeeds with status=active", async () => {
+    const { executeTool } = await loadTools();
+    const res = await executeTool(
+      "add_driver",
+      { full_name: "Brand New Driver" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.driver.full_name).toBe("Brand New Driver");
+    expect(body.driver.status).toBe("active");
+    expect(body.driver.active).toBe(true);
+    expect(body.driver.phone).toBeNull();
+    expect(body.driver.email).toBeNull();
+  });
+
+  it("5. invalid status enum returns 400", async () => {
+    const { executeTool } = await loadTools();
+    const res = await executeTool(
+      "add_driver",
+      { full_name: "Test Driver", status: "retired" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBe(true);
+    const body = parseResult(res);
+    expect(body.status).toBe(400);
+    expect(body.valid_values).toEqual(["active", "inactive"]);
+    expect(db.drivers).toHaveLength(0);
+  });
+});
+
+describe("update_driver", () => {
+  it("6. happy path — add phone to existing driver", async () => {
+    const { executeTool } = await loadTools();
+    const driver = makeDriver({ full_name: "Hassan", phone: null });
+
+    const res = await executeTool(
+      "update_driver",
+      { driver_id: driver.id, phone: "+1 (619) 555-9001" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.before.phone).toBeNull();
+    expect(body.after.phone).toBe("+1 (619) 555-9001");
+    expect(body.changed_fields).toEqual(["phone"]);
+    expect(body.audit_id).toBeTruthy();
+    expect(body.warnings).toEqual([]);
+    expect(db.audit).toHaveLength(1);
+    expect(db.audit[0].entity_type).toBe("driver");
+    expect(db.events).toHaveLength(1);
+  });
+
+  it("7. no-op — only driver_id, returns empty changed_fields", async () => {
+    const { executeTool } = await loadTools();
+    const driver = makeDriver();
+
+    const res = await executeTool(
+      "update_driver",
+      { driver_id: driver.id },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.changed_fields).toEqual([]);
+    expect(body.audit_id).toBeNull();
+    expect(db.audit).toHaveLength(0);
+    expect(db.events).toHaveLength(0);
+  });
+
+  it("8. not found — bad driver_id returns 404", async () => {
+    const { executeTool } = await loadTools();
+    const res = await executeTool(
+      "update_driver",
+      { driver_id: "00000000-0000-0000-0000-000000000000", phone: "anything" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBe(true);
+    const body = parseResult(res);
+    expect(body.status).toBe(404);
+    expect(body.error).toContain("not found");
+  });
+
+  it("9. status='inactive' returns a warning and flips active flag", async () => {
+    const { executeTool } = await loadTools();
+    const driver = makeDriver({ status: "active", active: true });
+
+    const res = await executeTool(
+      "update_driver",
+      { driver_id: driver.id, status: "inactive" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.after.status).toBe("inactive");
+    expect(body.after.active).toBe(false);
+    expect(body.warnings.length).toBeGreaterThanOrEqual(1);
+    expect(body.warnings[0].toLowerCase()).toContain("inactive");
+  });
+
+  it("10. PII redaction — phone/email masked in feed, full in audit", async () => {
+    const { executeTool } = await loadTools();
+    const driver = makeDriver({
+      full_name: "Hassan",
+      phone: null,
+      email: null,
+    });
+
+    await executeTool(
+      "update_driver",
+      {
+        driver_id: driver.id,
+        phone: "+1 (310) 555-4242",
+        email: "hassan@example.com",
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(db.events).toHaveLength(1);
+    const feedMsg = db.events[0].message as string;
+    expect(feedMsg).toContain("***-***-4242");
+    expect(feedMsg).not.toContain("310");
+    expect(feedMsg).not.toContain("5554242");
+    expect(feedMsg).toContain("h***@example.com");
+    expect(feedMsg).not.toContain("hassan@example.com");
+
+    const after = JSON.parse(db.audit[0].after_json);
+    expect(after.phone).toBe("+1 (310) 555-4242");
+    expect(after.email).toBe("hassan@example.com");
   });
 });
 
