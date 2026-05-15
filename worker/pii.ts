@@ -58,12 +58,22 @@ export function summarizeRideChanges(
   passengerName: string,
   changes: Record<string, { before: unknown; after: unknown }>,
 ): string {
+  return summarizeChanges(passengerName, changes);
+}
+
+// Same shape as summarizeRideChanges; works for any entity (clients,
+// drivers). The first argument is the subject label that prefixes the
+// summary (e.g. "Greg Vazquez", "Client Greg Vazquez").
+export function summarizeChanges(
+  subject: string,
+  changes: Record<string, { before: unknown; after: unknown }>,
+): string {
   const parts: string[] = [];
   for (const [field, { before, after }] of Object.entries(changes)) {
     parts.push(formatFieldChange(field, before, after));
   }
-  if (parts.length === 0) return `${passengerName}: no changes.`;
-  return `${passengerName}: ${parts.join("; ")}.`;
+  if (parts.length === 0) return `${subject}: no changes.`;
+  return `${subject}: ${parts.join("; ")}.`;
 }
 
 function formatFieldChange(
@@ -80,6 +90,7 @@ function formatFieldChange(
 function redactorFor(field: string): (v: unknown) => string {
   switch (field) {
     case "passenger_phone":
+    case "phone":
       return (v) => redactPhone(v as string);
     case "passenger_email":
     case "email":

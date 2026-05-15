@@ -47,9 +47,30 @@ show errors when it polls.
 
 This deployment also exposes an MCP (Model Context Protocol) endpoint so
 Claude — or any MCP-aware client — can read and edit ride data through
-typed tools. Available tools: `create_ride`, `update_ride`,
-`update_ride_status`, `list_rides`, `find_or_create_client`,
-`list_drivers`, `list_vehicles`, `log_activity`.
+typed tools. As of Session 3 (May 2026) the surface is feature-complete
+for the current roadmap.
+
+| tool                   | what it does                                              |
+| ---------------------- | --------------------------------------------------------- |
+| `create_ride`          | Schedule a new ride.                                       |
+| `update_ride`          | Edit any combination of fields on an existing ride.       |
+| `update_ride_status`   | Move a ride between `scheduled` / `in_progress` / etc.    |
+| `list_rides`           | Return rides for a date / range / status (capped at 50).  |
+| `find_or_create_client`| Look up a recurring client by name, create if missing.    |
+| `update_client`        | Edit a client; archives prior address on `home_address`.  |
+| `link_ride_to_client`  | Retroactively link an orphan ride to a client.            |
+| `add_driver`           | Create a new driver; rejects case-insensitive duplicates. |
+| `update_driver`        | Edit a driver; setting `status=inactive` warns + hides.   |
+| `list_drivers`         | List active drivers (capped at 50).                       |
+| `list_vehicles`        | List active vehicles (capped at 50).                      |
+| `log_activity`         | Append a free-form note to the dashboard activity feed.   |
+
+Every write tool returns `{ before, after, changed_fields, audit_id,
+warnings }` (or `{ driver, audit_id, warnings }` for `add_driver`), so
+the caller can verify the change took effect. Writes are atomic via
+SECURITY DEFINER RPCs in Postgres (`apply_ride_update_v1`,
+`apply_client_update_v1`, `apply_ride_link_client_v1`,
+`apply_driver_create_v1`, `apply_driver_update_v1`).
 
 ### Authentication
 
