@@ -114,6 +114,10 @@ function fakeSupabase() {
           _filters.push((r) => r[col] <= val);
           return builder;
         },
+        in(col: string, vals: any[]) {
+          _filters.push((r) => vals.includes(r[col]));
+          return builder;
+        },
         ilike(col: string, pat: string) {
           const re = new RegExp(pat.replace(/%/g, ".*"), "i");
           _filters.push((r) => re.test(String(r[col] ?? "")));
@@ -813,8 +817,8 @@ describe("update_client", () => {
     const history = JSON.parse(body.after.previous_addresses as string);
     expect(history).toHaveLength(1);
     expect(history[0].address).toBe(oldAddr);
-    expect(typeof history[0].moved_at).toBe("string");
-    expect(new Date(history[0].moved_at).toString()).not.toBe("Invalid Date");
+    expect(typeof history[0].changed_at).toBe("string");
+    expect(new Date(history[0].changed_at).toString()).not.toBe("Invalid Date");
   });
 
   it("3. no-op — only client_id, changed_fields is []", async () => {
@@ -947,8 +951,8 @@ describe("link_ride_to_client", () => {
     expect(res.isError).toBe(true);
     const body = parseResult(res);
     expect(body.status).toBe(409);
-    expect(body.current_client_id).toBe(oldClient.id);
-    expect(body.current_client_name).toBe("Old Linked Client");
+    expect(body.current.id).toBe(oldClient.id);
+    expect(body.current.name).toBe("Old Linked Client");
     expect(body.error).toContain("force");
     // Ride should NOT have been updated.
     expect(db.rides[ride.id].client_id).toBe(oldClient.id);
@@ -1049,8 +1053,8 @@ describe("add_driver", () => {
     expect(res.isError).toBe(true);
     const body = parseResult(res);
     expect(body.status).toBe(409);
-    expect(body.existing_driver.id).toBe(existing.id);
-    expect(body.existing_driver.full_name).toBe("Carlos Garcia");
+    expect(body.existing.id).toBe(existing.id);
+    expect(body.existing.full_name).toBe("Carlos Garcia");
     expect(body.error).toContain("update_driver");
     // No new row created.
     expect(db.drivers).toHaveLength(1);
@@ -1071,7 +1075,7 @@ describe("add_driver", () => {
     expect(res.isError).toBe(true);
     const body = parseResult(res);
     expect(body.status).toBe(409);
-    expect(body.existing_driver.full_name).toBe("Carlos Garcia");
+    expect(body.existing.full_name).toBe("Carlos Garcia");
     expect(db.drivers).toHaveLength(1);
   });
 
@@ -1217,6 +1221,229 @@ describe("update_driver", () => {
     const after = JSON.parse(db.audit[0].after_json);
     expect(after.phone).toBe("+1 (310) 555-4242");
     expect(after.email).toBe("hassan@example.com");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// Session 4: fuzzy-resolve by name + divergence/normalization fixes
+// ────────────────────────────────────────────────────────────────────
+
+describe("update_driver — fuzzy resolve by full_name", () => {
+  it("resolves a driver by full_name (no driver_id) — happy path", async () => {
+    const { executeTool } = await loadTools();
+    const driver = makeDriver({ full_name: "Hassan", phone: null });
+
+    const res = await executeTool(
+      "update_driver",
+      { full_name: "hassan", phone: "+1 (619) 555-3000" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.driver_id).toBe(driver.id);
+    expect(body.after.phone).toBe("+1 (619) 555-3000");
+  });
+
+  it("ambiguous full_name returns 400 with candidates", async () => {
+    const { executeTool } = await loadTools();
+    makeDriver({ full_name: "David Santiago" });
+    makeDriver({ full_name: "David Garcia" });
+
+    const res = await executeTool(
+      "update_driver",
+      { full_name: "David", phone: "+1 (000) 000-0000" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBe(true);
+    const body = parseResult(res);
+    expect(body.status).toBe(400);
+    expect(body.candidates).toHaveLength(2);
+    expect(body.candidates.map((c: any) => c.full_name).sort()).toEqual([
+      "David Garcia",
+      "David Santiago",
+    ]);
+  });
+});
+
+describe("update_client — fuzzy resolve by name", () => {
+  it("resolves a client by name (no client_id) — happy path", async () => {
+    const { executeTool } = await loadTools();
+    const client = makeClient({ name: "Greg Vazquez" });
+
+    const res = await executeTool(
+      "update_client",
+      { name: "  greg   vazquez  ", phone: "+1 (000) 555-9999" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.client_id).toBe(client.id);
+    expect(body.after.phone).toBe("+1 (000) 555-9999");
+  });
+
+  it("ambiguous name returns 400 with candidates", async () => {
+    const { executeTool } = await loadTools();
+    makeClient({ name: "Kevin Morgan" });
+    makeClient({ name: "Kevin Spencer" });
+
+    const res = await executeTool(
+      "update_client",
+      { name: "Kevin", phone: "anything" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBe(true);
+    const body = parseResult(res);
+    expect(body.status).toBe(400);
+    expect(body.candidates).toHaveLength(2);
+  });
+});
+
+describe("update_driver — inactive + future-rides warning", () => {
+  it("lists future rides as a second warning when going inactive", async () => {
+    const { executeTool } = await loadTools();
+    const driver = makeDriver({ status: "active", active: true });
+    const future1 = makeRide({
+      driver_id: driver.id,
+      status: "scheduled",
+      pickup_at: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    const future2 = makeRide({
+      driver_id: driver.id,
+      status: "in_progress",
+      pickup_at: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+    });
+    // A past ride should NOT be listed.
+    makeRide({
+      driver_id: driver.id,
+      status: "scheduled",
+      pickup_at: new Date(Date.now() - 86_400_000).toISOString(),
+    });
+    // A different driver's future ride should NOT be listed.
+    const otherDriver = makeDriver({ full_name: "Other Driver" });
+    makeRide({
+      driver_id: otherDriver.id,
+      status: "scheduled",
+      pickup_at: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+
+    const res = await executeTool(
+      "update_driver",
+      { driver_id: driver.id, status: "inactive" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.warnings.length).toBe(2);
+    expect(body.warnings[0]).toContain("inactive");
+    expect(body.warnings[1]).toContain("2 future rides");
+    expect(body.warnings[1]).toContain(future1.id);
+    expect(body.warnings[1]).toContain(future2.id);
+  });
+});
+
+describe("find_or_create_client — normalization + divergence", () => {
+  it("matches existing client across whitespace + case", async () => {
+    const { executeTool } = await loadTools();
+    const existing = makeClient({ name: "Greg Vazquez" });
+
+    const res = await executeTool(
+      "find_or_create_client",
+      { name: "  greg   vazquez  " },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.found).toBe(true);
+    expect(body.client.id).toBe(existing.id);
+    expect(body.warnings).toEqual([]);
+    // No duplicate row inserted.
+    expect(Object.keys(db.clients)).toHaveLength(1);
+  });
+
+  it("emits warning per diverging field on lookup hit", async () => {
+    const { executeTool } = await loadTools();
+    makeClient({
+      name: "Greg Vazquez",
+      phone: "+1 (619) 555-1086",
+      email: "greg@old.com",
+      default_billing: "card",
+    });
+
+    const res = await executeTool(
+      "find_or_create_client",
+      {
+        name: "Greg Vazquez",
+        phone: "+1 (000) 555-9999",
+        email: "greg@new.com",
+        default_billing: "cash",
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.found).toBe(true);
+    expect(body.warnings).toHaveLength(3);
+    expect(body.warnings.some((w: string) => w.includes("phone"))).toBe(true);
+    expect(body.warnings.some((w: string) => w.includes("email"))).toBe(true);
+    expect(
+      body.warnings.some((w: string) => w.includes("default_billing")),
+    ).toBe(true);
+    // Stored values must not have been overwritten.
+    const stored = Object.values(db.clients)[0] as any;
+    expect(stored.phone).toBe("+1 (619) 555-1086");
+    expect(stored.email).toBe("greg@old.com");
+    expect(stored.default_billing).toBe("card");
+  });
+});
+
+describe("update_client — previous_addresses cap at 20 FIFO", () => {
+  it("caps history at 20 and evicts the oldest first", async () => {
+    const { executeTool } = await loadTools();
+    // Seed with 20 entries so the next change forces an eviction.
+    const seedHistory = Array.from({ length: 20 }, (_, i) => ({
+      address: `Seed Address ${i}`,
+      changed_at: new Date(2020, 0, i + 1).toISOString(),
+    }));
+    const client = makeClient({
+      name: "Mover",
+      home_address: "Most Recent Address",
+      previous_addresses: JSON.stringify(seedHistory),
+    });
+
+    const res = await executeTool(
+      "update_client",
+      {
+        client_id: client.id,
+        home_address: "Brand New Address",
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    const history = JSON.parse(body.after.previous_addresses as string);
+    expect(history).toHaveLength(20);
+    // The oldest seed entry should be gone.
+    expect(history[0].address).not.toBe("Seed Address 0");
+    expect(history[0].address).toBe("Seed Address 1");
+    // The most recent prior address (the one we just replaced) should
+    // now be the last entry.
+    expect(history[history.length - 1].address).toBe("Most Recent Address");
   });
 });
 
