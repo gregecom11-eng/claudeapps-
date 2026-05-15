@@ -52,10 +52,11 @@ const UPDATABLE_RIDE_FIELDS = [
 ] as const;
 
 // Order used for the changed_fields output of update_client.
+// `name` is identifier-only — it does not appear here.
 const UPDATABLE_CLIENT_FIELDS = [
-  "name",
   "phone",
   "email",
+  "company",
   "default_billing",
   "home_address",
   "previous_addresses",
@@ -64,8 +65,8 @@ const UPDATABLE_CLIENT_FIELDS = [
 ] as const;
 
 // Order used for the changed_fields output of update_driver.
+// `full_name` is identifier-only — it does not appear here.
 const UPDATABLE_DRIVER_FIELDS = [
-  "full_name",
   "phone",
   "email",
   "default_split",
@@ -323,7 +324,8 @@ export const TOOL_SCHEMAS = [
       "Special behaviors:",
       "  - `home_address`: when changed from a non-null prior value, the",
       "    old address is automatically pushed onto `previous_addresses`",
-      "    (a JSON array of {address, moved_at} entries) so we never lose",
+      "    (a JSON array of {address, changed_at} entries, capped at 20",
+      "    entries FIFO) so we never lose",
       "    a client's address history.",
       "  - `notes` is APPENDED (timestamped), never overwrites.",
       "  - Setting `status` to 'inactive' is allowed but returns a warning.",
@@ -342,14 +344,17 @@ export const TOOL_SCHEMAS = [
       properties: {
         client_id: {
           type: "string",
-          description: "UUID of the client to edit. Required.",
+          description:
+            "UUID of the client to edit. Either client_id or name is required.",
         },
         name: {
           type: "string",
-          description: "Rare — for typo fixes only.",
+          description:
+            "Fallback identifier — fuzzy-matched against existing clients. Ambiguous matches return 400 with the candidate list.",
         },
         phone: { type: "string" },
         email: { type: "string" },
+        company: { type: "string" },
         default_billing: {
           type: "string",
           enum: [
@@ -378,7 +383,6 @@ export const TOOL_SCHEMAS = [
             "APPENDED to the existing notes with a timestamp prefix, never overwrites.",
         },
       },
-      required: ["client_id"],
     },
   },
   {
@@ -469,14 +473,17 @@ export const TOOL_SCHEMAS = [
   {
     name: "update_driver",
     description: [
-      "Edit an existing driver's profile. Only `driver_id` is required;",
-      "any field you don't pass is left untouched.",
+      "Edit an existing driver's profile. Either `driver_id` or",
+      "`full_name` is required to identify the driver; any update field",
+      "you don't pass is left untouched.",
       "",
       "Special behaviors:",
+      "  - `full_name` is identifier-only; it doesn't rename the driver.",
       "  - `notes` is APPENDED (timestamped), never overwritten.",
       "  - Setting `status` to 'inactive' returns a warning and also",
       "    flips the legacy `active` boolean to false, so the driver",
-      "    won't show up in driver pickers.",
+      "    won't show up in driver pickers. If the driver has future",
+      "    rides assigned, a second warning lists those ride IDs.",
       "",
       "PII redaction is automatic for the activity feed (phone last 4,",
       "email first letter + domain); the audit table stores full values.",
@@ -489,9 +496,14 @@ export const TOOL_SCHEMAS = [
       properties: {
         driver_id: {
           type: "string",
-          description: "UUID of the driver to edit. Required.",
+          description:
+            "UUID of the driver to edit. Either driver_id or full_name is required.",
         },
-        full_name: { type: "string" },
+        full_name: {
+          type: "string",
+          description:
+            "Fallback identifier — fuzzy-matched against existing drivers. Ambiguous matches return 400 with the candidate list.",
+        },
         phone: { type: "string" },
         email: { type: "string" },
         default_split: { type: "number" },
@@ -508,7 +520,6 @@ export const TOOL_SCHEMAS = [
             "APPENDED to the existing notes with a timestamp prefix, never overwrites.",
         },
       },
-      required: ["driver_id"],
     },
   },
 ] as const;
@@ -695,16 +706,18 @@ function fuzzyMatch<T>(
   query: string,
   getLabel: (row: T) => string,
 ): { match: T | null; candidates: T[] } {
-  const lower = query.toLowerCase();
-  const exact = rows.find((r) => getLabel(r).toLowerCase() === lower);
+  // Normalize both sides the same way: lower + collapse whitespace +
+  // trim. So "  Greg   Vazquez  " matches "Greg Vazquez".
+  const norm = normalizeName(query);
+  const exact = rows.find((r) => normalizeName(getLabel(r)) === norm);
   if (exact) return { match: exact, candidates: [exact] };
   const substring = rows.filter((r) =>
-    getLabel(r).toLowerCase().includes(lower),
+    normalizeName(getLabel(r)).includes(norm),
   );
   if (substring.length === 1) return { match: substring[0], candidates: substring };
   if (substring.length > 1) return { match: null, candidates: substring };
   const word = rows.filter((r) =>
-    getLabel(r).toLowerCase().split(/\W+/).includes(lower),
+    normalizeName(getLabel(r)).split(/\W+/).includes(norm),
   );
   if (word.length === 1) return { match: word[0], candidates: word };
   if (word.length > 1) return { match: null, candidates: word };
@@ -723,12 +736,31 @@ async function findVehicleByName(env: Env, name: string) {
 }
 
 async function findClientByName(env: Env, name: string) {
+  const { match } = await findClients(env, name);
+  return match;
+}
+
+type ClientRow = {
+  id: string;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  company?: string | null;
+  default_billing?: string | null;
+};
+
+// Fuzzy-match a client name. Mirrors findDrivers but on the clients
+// table. Normalizes input first (lower + collapse whitespace + trim)
+// so "  Greg   Vazquez  " matches "Greg Vazquez".
+async function findClients(
+  env: Env,
+  name: string,
+): Promise<{ match: ClientRow | null; candidates: ClientRow[] }> {
   const sb = adminClient(env);
   const { data } = await sb
     .from("clients")
-    .select("id, name")
-    .ilike("name", name);
-  return data?.[0] ?? null;
+    .select("id, name, phone, email, company, default_billing");
+  return fuzzyMatch(data ?? [], name, (c) => c.name);
 }
 
 // ── Tool implementations ──────────────────────────────────────────────
@@ -933,14 +965,40 @@ async function findOrCreateClient(args: Record<string, unknown>, env: Env) {
   const sb = adminClient(env);
   const name = s(args.name);
   if (!name) throw new Error("name is required.");
-  const existing = await findClientByName(env, name);
-  if (existing) {
+
+  // Lookup uses the same normalization (lower + collapse whitespace +
+  // trim) as findDrivers/fuzzyMatch, so "  Greg   Vazquez  " matches
+  // "Greg Vazquez".
+  const { match } = await findClients(env, name);
+  if (match) {
     const { data } = await sb
       .from("clients")
       .select("*")
-      .eq("id", existing.id)
+      .eq("id", match.id)
       .single();
-    return { found: true, client: data };
+
+    // If the caller passed values that differ from the stored row,
+    // surface them as warnings — do NOT silently overwrite. They
+    // should re-run via update_client to commit the change.
+    const warnings: string[] = [];
+    const fieldsToCheck: { key: string; arg: unknown }[] = [
+      { key: "phone", arg: args.phone },
+      { key: "email", arg: args.email },
+      { key: "company", arg: args.company },
+      { key: "default_billing", arg: args.default_billing },
+    ];
+    for (const { key, arg } of fieldsToCheck) {
+      if (arg === undefined) continue;
+      const passed = s(arg) ?? null;
+      const stored = (data as Record<string, unknown>)[key] ?? null;
+      if (passed !== stored) {
+        warnings.push(
+          `Caller passed ${key}=${JSON.stringify(passed)} but stored value is ${JSON.stringify(stored)}; use update_client to change it.`,
+        );
+      }
+    }
+
+    return { found: true, client: data, warnings };
   }
   const { data, error } = await sb
     .from("clients")
@@ -954,7 +1012,7 @@ async function findOrCreateClient(args: Record<string, unknown>, env: Env) {
     .select()
     .single();
   if (error) throw new Error(error.message);
-  return { found: false, created: true, client: data };
+  return { found: false, created: true, client: data, warnings: [] };
 }
 
 async function listDriversTool(args: Record<string, unknown>, env: Env) {
@@ -1330,9 +1388,24 @@ async function updateClient(
   ctx: ToolContext,
 ) {
   const sb = adminClient(env);
-  const client_id = s(args.client_id);
+  let client_id = s(args.client_id);
   if (!client_id) {
-    throw new ToolError(400, "client_id is required.");
+    // Fall back to fuzzy name resolution. Ambiguous → 400 with
+    // candidates so the caller can pick one and re-run with client_id.
+    const name = s(args.name);
+    if (!name) {
+      throw new ToolError(400, "client_id or name is required.");
+    }
+    const { match, candidates } = await findClients(env, name);
+    if (!match) {
+      if (candidates.length === 0) {
+        throw new ToolError(404, `No client matches '${name}'.`);
+      }
+      throw new ToolError(400, `Multiple clients match '${name}'.`, {
+        candidates: candidates.map((c) => ({ id: c.id, name: c.name })),
+      });
+    }
+    client_id = match.id;
   }
 
   if (args.default_billing !== undefined) {
@@ -1363,8 +1436,10 @@ async function updateClient(
   }
 
   const patch: Record<string, unknown> = {};
-  if (args.name !== undefined) patch.name = s(args.name) ?? null;
+  // `name` is identifier-only in this tool (Session 4); it does NOT
+  // update the row. Use direct SQL for a name typo fix.
   if (args.phone !== undefined) patch.phone = s(args.phone) ?? null;
+  if (args.company !== undefined) patch.company = s(args.company) ?? null;
   if (args.email !== undefined) patch.email = s(args.email) ?? null;
   if (args.default_billing !== undefined)
     patch.default_billing = s(args.default_billing);
@@ -1383,10 +1458,12 @@ async function updateClient(
     if (newAddr !== (oldAddr ?? null)) {
       patch.home_address = newAddr;
       if (oldAddr) {
-        const history = parseAddressHistory(
+        let history = parseAddressHistory(
           (current as Record<string, unknown>).previous_addresses,
         );
-        history.push({ address: oldAddr, moved_at: new Date().toISOString() });
+        history.push({ address: oldAddr, changed_at: new Date().toISOString() });
+        // Cap at 20 entries; FIFO-evict the oldest if we'd exceed.
+        if (history.length > 20) history = history.slice(-20);
         patch.previous_addresses = JSON.stringify(history);
       }
     }
@@ -1471,8 +1548,8 @@ async function updateClient(
 
 function parseAddressHistory(
   raw: unknown,
-): { address: string; moved_at: string }[] {
-  if (Array.isArray(raw)) return raw as { address: string; moved_at: string }[];
+): { address: string; changed_at: string }[] {
+  if (Array.isArray(raw)) return raw as { address: string; changed_at: string }[];
   if (typeof raw !== "string" || raw.trim() === "") return [];
   try {
     const parsed = JSON.parse(raw);
@@ -1535,8 +1612,10 @@ async function linkRideToClient(
       409,
       `Ride already linked to client ${existing?.name ?? ride.client_id}. Pass force: true to overwrite.`,
       {
-        current_client_id: ride.client_id,
-        current_client_name: existing?.name ?? null,
+        current: {
+          id: ride.client_id,
+          name: existing?.name ?? null,
+        },
       },
     );
   }
@@ -1595,8 +1674,10 @@ async function linkRideToClient(
         409,
         `Ride already linked to client ${exMatch[2]}. Pass force: true to overwrite.`,
         {
-          current_client_id: exMatch[1],
-          current_client_name: exMatch[2] === "?" ? null : exMatch[2],
+          current: {
+            id: exMatch[1],
+            name: exMatch[2] === "?" ? null : exMatch[2],
+          },
         },
       );
     }
@@ -1668,7 +1749,7 @@ async function addDriver(
     throw new ToolError(
       409,
       `Driver '${full_name}' already exists. Use update_driver to modify the existing record.`,
-      { existing_driver: duplicate },
+      { existing: duplicate },
     );
   }
 
@@ -1726,8 +1807,25 @@ async function updateDriver(
   ctx: ToolContext,
 ) {
   const sb = adminClient(env);
-  const driver_id = s(args.driver_id);
-  if (!driver_id) throw new ToolError(400, "driver_id is required.");
+  let driver_id = s(args.driver_id);
+  if (!driver_id) {
+    // Fall back to fuzzy full_name resolution. Ambiguous → 400 with
+    // candidates so the caller can pick one and re-run with driver_id.
+    const name = s(args.full_name);
+    if (!name) {
+      throw new ToolError(400, "driver_id or full_name is required.");
+    }
+    const { match, candidates } = await findDrivers(env, name);
+    if (!match) {
+      if (candidates.length === 0) {
+        throw new ToolError(404, `No driver matches '${name}'.`);
+      }
+      throw new ToolError(400, `Multiple drivers match '${name}'.`, {
+        candidates: candidates.map((d) => ({ id: d.id, full_name: d.full_name })),
+      });
+    }
+    driver_id = match.id;
+  }
 
   if (args.status !== undefined) {
     const v = s(args.status);
@@ -1757,7 +1855,8 @@ async function updateDriver(
   }
 
   const patch: Record<string, unknown> = {};
-  if (args.full_name !== undefined) patch.full_name = s(args.full_name);
+  // `full_name` is identifier-only in this tool (Session 4); it does
+  // NOT update the row. Use direct SQL for a name typo fix.
   if (args.phone !== undefined) patch.phone = s(args.phone) ?? null;
   if (args.email !== undefined) patch.email = s(args.email) ?? null;
   if (args.default_split !== undefined) {
@@ -1795,9 +1894,27 @@ async function updateDriver(
   }
 
   const warnings: string[] = [];
-  if (args.status !== undefined && s(args.status) === "inactive") {
-    if ((current as Record<string, unknown>).status !== "inactive") {
-      warnings.push(`Driver status set to inactive.`);
+  const goingInactive =
+    args.status !== undefined &&
+    s(args.status) === "inactive" &&
+    (current as Record<string, unknown>).status !== "inactive";
+  if (goingInactive) {
+    warnings.push(`Driver status set to inactive.`);
+
+    // Surface any future rides still pointed at this driver so the
+    // operator can reassign before the driver goes dark.
+    const nowIso = new Date().toISOString();
+    const { data: futureRides } = await sb
+      .from("rides")
+      .select("id")
+      .eq("driver_id", driver_id)
+      .in("status", ["scheduled", "in_progress"])
+      .gte("pickup_at", nowIso);
+    const ids = (futureRides ?? []).map((r: { id: string }) => r.id);
+    if (ids.length > 0) {
+      warnings.push(
+        `Driver has ${ids.length} future ride${ids.length === 1 ? "" : "s"} assigned: ${ids.join(", ")}.`,
+      );
     }
   }
 
