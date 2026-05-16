@@ -657,6 +657,122 @@ export async function listEvents(limit = 30): Promise<ActivityEvent[]> {
   return data ?? [];
 }
 
+// ── Expenses: fixed ────────────────────────────────────────────────
+// Soft-archive via effective_to instead of delete so historical
+// allocations remain stable. Direct table writes (RLS-protected) —
+// these aren't customer-facing PII so no SECURITY DEFINER RPC needed
+// for v1.
+export async function listFixedExpenses(): Promise<
+  import("./types").ExpenseFixed[]
+> {
+  const { data, error } = await supabase
+    .from("expenses_fixed")
+    .select("*")
+    .order("effective_from", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as import("./types").ExpenseFixed[];
+}
+export async function upsertFixedExpense(
+  e: Partial<import("./types").ExpenseFixed>,
+): Promise<import("./types").ExpenseFixed> {
+  const { data, error } = await supabase
+    .from("expenses_fixed")
+    .upsert(e)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as import("./types").ExpenseFixed;
+}
+export async function deleteFixedExpense(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("expenses_fixed")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
+
+// ── Expenses: per-ride costs ───────────────────────────────────────
+export async function listRideCosts(
+  rideId: string,
+): Promise<import("./types").RideCost[]> {
+  const { data, error } = await supabase
+    .from("ride_costs")
+    .select("*")
+    .eq("ride_id", rideId)
+    .order("added_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as import("./types").RideCost[];
+}
+
+// Bulk-load for the Earnings page — limit-bounded so a year window
+// stays under a few hundred rows.
+export async function listRideCostsForRides(
+  rideIds: string[],
+): Promise<import("./types").RideCost[]> {
+  if (rideIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("ride_costs")
+    .select("*")
+    .in("ride_id", rideIds);
+  if (error) throw error;
+  return (data ?? []) as import("./types").RideCost[];
+}
+
+export async function upsertRideCost(
+  c: Partial<import("./types").RideCost>,
+): Promise<import("./types").RideCost> {
+  const { data: userResp } = await supabase.auth.getUser();
+  const payload = {
+    ...c,
+    added_by: c.added_by ?? userResp.user?.id ?? null,
+    confirmed_at:
+      c.actual_cents !== null && c.actual_cents !== undefined
+        ? (c.confirmed_at ?? new Date().toISOString())
+        : null,
+  };
+  const { data, error } = await supabase
+    .from("ride_costs")
+    .upsert(payload)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as import("./types").RideCost;
+}
+export async function deleteRideCost(id: string): Promise<void> {
+  const { error } = await supabase.from("ride_costs").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ── Expenses: vehicle maintenance ──────────────────────────────────
+export async function listMaintenance(): Promise<
+  import("./types").VehicleMaintenance[]
+> {
+  const { data, error } = await supabase
+    .from("vehicle_maintenance")
+    .select("*")
+    .order("serviced_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as import("./types").VehicleMaintenance[];
+}
+export async function upsertMaintenance(
+  m: Partial<import("./types").VehicleMaintenance>,
+): Promise<import("./types").VehicleMaintenance> {
+  const { data, error } = await supabase
+    .from("vehicle_maintenance")
+    .upsert(m)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as import("./types").VehicleMaintenance;
+}
+export async function deleteMaintenance(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("vehicle_maintenance")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
+
 // Status-change events for a single ride. Used by the driver sheet to
 // stamp "Arrived 11:12 AM" alongside the progress strip.
 export async function listRideEvents(
