@@ -15,6 +15,7 @@ import { fmtDateTime, fmtMoney, fmtTime } from "../lib/format";
 import { Avatar } from "../components/Avatar";
 import { Icon, type IconName } from "../components/Icon";
 import { useConfirm, useToast } from "../components/Notify";
+import { RideCostsCard } from "../components/RideCostsCard";
 import { StatusBadge } from "../components/StatusBadge";
 import type {
   RideExtra,
@@ -446,6 +447,8 @@ function Overview({
         baseTotalCents={ride.total_cents}
         onChanged={onExtrasChanged}
       />
+
+      <RideCostsCard rideId={ride.id} rideTotalCents={ride.total_cents} />
 
       {driver ? (
         <article className="surface rounded-[12px]">
