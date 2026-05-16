@@ -1204,18 +1204,45 @@ function ActionBar({
   const labels: Record<RideStatus, string> = {
     requested: "",
     scheduled: "On my way",
-    on_the_way: "I'm here",
-    arrived: "Passenger on board",
+    on_the_way: "On the way",
+    arrived: "Arrived at pick up location",
     in_progress: "Trip complete",
     completed: "",
     cancelled: "",
   };
   const label = labels[next];
   const isComplete = next === "completed";
+
+  // Two-tap confirm: first tap arms the button (shows "Tap again to
+  // confirm"); second tap within 4 seconds commits. Auto-disarms after
+  // the window so an accidental tap doesn't sit waiting forever.
+  const [arming, setArming] = useState<RideStatus | null>(null);
+  useEffect(() => {
+    if (!arming) return;
+    const t = setTimeout(() => setArming(null), 4000);
+    return () => clearTimeout(t);
+  }, [arming]);
+  // When the parent updates the status (the advance went through), or
+  // the next status changes, clear the arming state so the next button
+  // starts fresh.
+  useEffect(() => {
+    setArming(null);
+  }, [status, next]);
+
+  const armed = arming === next;
+  const onTap = () => {
+    if (armed) {
+      setArming(null);
+      onAdvance(next);
+    } else {
+      setArming(next);
+    }
+  };
   return (
     <>
       <button
-        onClick={() => onAdvance(next)}
+        onClick={onTap}
+        aria-pressed={armed}
         className="w-full inline-flex items-center justify-center gap-2 transition active:scale-[0.99]"
         style={{
           height: 56,
@@ -1223,22 +1250,32 @@ function ActionBar({
           fontSize: 16,
           fontWeight: 600,
           letterSpacing: "-0.005em",
-          background: isComplete
+          textAlign: "center",
+          padding: "0 14px",
+          background: armed
+            ? "color-mix(in oklab, var(--warn) 22%, var(--surface))"
+            : isComplete
             ? "color-mix(in oklab, var(--success) 22%, var(--surface))"
             : "var(--accent)",
-          color: isComplete ? "var(--success)" : "#15161B",
+          color: armed
+            ? "var(--warn)"
+            : isComplete
+            ? "var(--success)"
+            : "#15161B",
           border: `1px solid ${
-            isComplete
+            armed
+              ? "color-mix(in oklab, var(--warn) 55%, var(--border))"
+              : isComplete
               ? "color-mix(in oklab, var(--success) 50%, var(--border))"
               : "var(--accent-strong)"
           }`,
-          boxShadow: isComplete
+          boxShadow: armed || isComplete
             ? "none"
             : "0 8px 22px color-mix(in oklab, var(--accent) 32%, transparent)",
         }}
       >
-        <Icon name={isComplete ? "check" : "arrow"} size={17} />
-        {label}
+        <Icon name={armed || isComplete ? "check" : "arrow"} size={17} />
+        {armed ? `Tap again to confirm: ${label}` : label}
       </button>
       {status !== "scheduled" && status !== "completed" ? (
         <button
