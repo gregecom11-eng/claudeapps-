@@ -66,6 +66,10 @@ export type Driver = {
   last_seen_at?: string | null;
   notes: string | null;
   created_at: string;
+  // Added in migration 17_owner_commission.sql. Optional so the type
+  // stays compatible if the migration hasn't been applied yet.
+  is_owner?: boolean;
+  commission_rate_bps?: number;
 };
 
 export type Vehicle = {
