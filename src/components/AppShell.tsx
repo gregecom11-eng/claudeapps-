@@ -20,6 +20,7 @@ const DESKTOP_TABS: Tab[] = [
   { to: "/clients", label: "Clients", icon: "clients" },
   { to: "/drivers", label: "Drivers", icon: "drivers" },
   { to: "/earnings", label: "Earnings", icon: "wallet" },
+  { to: "/expenses", label: "Expenses", icon: "invoice" },
   { to: "/settings", label: "Settings", icon: "settings" },
 ];
 
@@ -33,6 +34,7 @@ const MOBILE_DOCK: Tab[] = [
 const MORE_LINKS: Tab[] = [
   { to: "/clients", label: "Clients", icon: "clients" },
   { to: "/drivers", label: "Drivers", icon: "drivers" },
+  { to: "/expenses", label: "Expenses", icon: "invoice" },
   { to: "/settings", label: "Settings", icon: "settings" },
 ];
 
