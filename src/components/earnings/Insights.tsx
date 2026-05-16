@@ -20,10 +20,13 @@ export type InsightInputs = {
   myIncomeCents: number;
   fleetRevenueCents: number;
   myIncomeDelta: number | null;
+  netProfitCents: number;
+  totalExpensesCents: number;
   topClients: TopClientRow[];
   agingBuckets: AgingBucket[];
   hasCommissionConfigured: boolean;
   ownerDriverPresent: boolean;
+  hasAnyExpenses: boolean;
   periodLabel: string;
 };
 
@@ -85,6 +88,36 @@ export function buildInsights(input: InsightInputs): Insight[] {
       body: up
         ? "Margin trend is healthy. Keep an eye on whether the gain is volume or pricing — both, ideally."
         : "Check whether you've lost a recurring booker or shifted into lower-margin trips. The clients table can confirm.",
+    });
+  }
+
+  // 4b) Profit margin call-out
+  if (input.hasAnyExpenses && input.myIncomeCents > 0) {
+    const margin = input.netProfitCents / input.myIncomeCents;
+    if (margin < 0) {
+      list.push({
+        tone: "bad",
+        title: `Net loss of ${fmtMoney(Math.abs(input.netProfitCents))} this period`,
+        body: `Your costs (${fmtMoney(input.totalExpensesCents)}) exceeded your income (${fmtMoney(input.myIncomeCents)}). Check the per-ride costs and fixed-expense allocation for outliers.`,
+      });
+    } else if (margin < 0.3) {
+      list.push({
+        tone: "warn",
+        title: `Margin is ${Math.round(margin * 100)}% — tighter than usual`,
+        body: `${fmtMoney(input.totalExpensesCents)} of your ${fmtMoney(input.myIncomeCents)} income went to costs. Where's the room to cut: per-ride variables, fixed, or maintenance?`,
+      });
+    } else if (margin > 0.55) {
+      list.push({
+        tone: "good",
+        title: `Strong margin: ${Math.round(margin * 100)}% net`,
+        body: `${fmtMoney(input.netProfitCents)} of your ${fmtMoney(input.myIncomeCents)} income is keepable profit. Whatever you're doing on cost control is working.`,
+      });
+    }
+  } else if (!input.hasAnyExpenses && input.myIncomeCents > 0) {
+    list.push({
+      tone: "neutral",
+      title: "Net profit is unknown — no expenses tracked yet",
+      body: "Open /expenses and log fixed costs (insurance, lease) plus per-ride gas. Net profit will start showing alongside income.",
     });
   }
 

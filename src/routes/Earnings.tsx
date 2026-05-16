@@ -18,7 +18,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   listAllDrivers,
   listClients,
+  listFixedExpenses,
   listInvoices,
+  listMaintenance,
+  listRideCostsForRides,
   listRides,
   listVehicles,
 } from "../lib/api";
@@ -33,12 +36,21 @@ import {
   myProjectedCents,
   type TripType,
 } from "../lib/earnings";
+import {
+  fixedExpenseAllocatedCents,
+  fixedExpenseAllocatedCentsByVehicle,
+  maintenanceAllocatedCents,
+  maintenanceAllocatedCentsByVehicle,
+} from "../lib/expenses";
 import type {
   Client,
   Driver,
+  ExpenseFixed,
   Invoice,
   Ride,
+  RideCost,
   Vehicle,
+  VehicleMaintenance,
 } from "../lib/types";
 
 import {
@@ -245,9 +257,17 @@ function buildDriverPayouts(
 function buildVehicleProf(
   rides: Ride[],
   vehicles: Vehicle[],
+  rideCosts: RideCost[],
+  fuelByVehicle: Map<string, number>,
+  maintenanceByVehicle: Map<string, number>,
+  fixedByVehicle: Map<string, number>,
   windowDays: number,
 ): VehicleProfRow[] {
-  const byVehicle = new Map<string, VehicleProfRow & { _days: Set<string> }>();
+  void rideCosts; // included so the signature documents its intent
+  const byVehicle = new Map<
+    string,
+    VehicleProfRow & { _days: Set<string> }
+  >();
   for (const r of rides) {
     if (r.status === "cancelled") continue;
     if (!r.vehicle_id) continue;
@@ -258,6 +278,9 @@ function buildVehicleProf(
       plate: v?.plate ?? null,
       rideCount: 0,
       revenueCents: 0,
+      fuelCents: 0,
+      maintenanceCents: 0,
+      fixedCents: 0,
       utilization: 0,
       _days: new Set<string>(),
     };
@@ -273,12 +296,36 @@ function buildVehicleProf(
       plate: s.plate,
       rideCount: s.rideCount,
       revenueCents: s.revenueCents,
+      fuelCents: fuelByVehicle.get(s.id) ?? 0,
+      maintenanceCents: maintenanceByVehicle.get(s.id) ?? 0,
+      fixedCents: fixedByVehicle.get(s.id) ?? 0,
       utilization: Math.min(
         1,
         windowDays > 0 ? s._days.size / windowDays : 0,
       ),
     }))
     .sort((a, b) => b.revenueCents - a.revenueCents);
+}
+
+// Sum gas-category ride costs per vehicle for rides in the window.
+// Uses actual when confirmed, else falls back to estimate.
+function buildFuelByVehicle(
+  rides: Ride[],
+  rideCosts: RideCost[],
+): Map<string, number> {
+  const rideToVehicle = new Map<string, string>();
+  for (const r of rides) {
+    if (r.vehicle_id) rideToVehicle.set(r.id, r.vehicle_id);
+  }
+  const out = new Map<string, number>();
+  for (const c of rideCosts) {
+    if (c.category !== "gas") continue;
+    const vid = rideToVehicle.get(c.ride_id);
+    if (!vid) continue;
+    const cents = c.actual_cents ?? c.estimated_cents;
+    out.set(vid, (out.get(vid) ?? 0) + cents);
+  }
+  return out;
 }
 
 // ── Header bar ────────────────────────────────────────────────────
@@ -334,6 +381,10 @@ export function Earnings() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [fixedExpenses, setFixedExpenses] = useState<ExpenseFixed[]>([]);
+  const [maintenance, setMaintenance] = useState<VehicleMaintenance[]>([]);
+  const [rideCosts, setRideCosts] = useState<RideCost[]>([]);
+  const [prevRideCosts, setPrevRideCosts] = useState<RideCost[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Resolve the comparison window from the compareMode + period.
@@ -347,7 +398,7 @@ export function Earnings() {
 
   const load = useCallback(async () => {
     try {
-      const [rs, prs, cs, ds, vs, invs] = await Promise.all([
+      const [rs, prs, cs, ds, vs, invs, fx, mt] = await Promise.all([
         listRides({
           from: period.from.toISOString(),
           to: period.to.toISOString(),
@@ -364,6 +415,8 @@ export function Earnings() {
         listAllDrivers(),
         listVehicles(),
         listInvoices().catch(() => []),
+        listFixedExpenses().catch(() => []),
+        listMaintenance().catch(() => []),
       ]);
       setRides(rs);
       setPrevRides(compareWindow ? prs : null);
@@ -371,6 +424,20 @@ export function Earnings() {
       setDrivers(ds);
       setVehicles(vs);
       setInvoices(invs);
+      setFixedExpenses(fx);
+      setMaintenance(mt);
+      // Per-ride costs for both windows. Issued as separate queries so a
+      // missing migration on either side doesn't blank the whole page.
+      const rcCurr =
+        rs.length > 0
+          ? await listRideCostsForRides(rs.map((r) => r.id)).catch(() => [])
+          : [];
+      setRideCosts(rcCurr);
+      const rcPrev =
+        compareWindow && prs.length > 0
+          ? await listRideCostsForRides(prs.map((r) => r.id)).catch(() => [])
+          : [];
+      setPrevRideCosts(rcPrev);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
@@ -437,9 +504,107 @@ export function Earnings() {
     );
   }, [period]);
 
+  // ── Expense allocations for the current window ─────────────────
+  const fixedAllocatedCents = useMemo(
+    () =>
+      fixedExpenseAllocatedCents(fixedExpenses, period.from, period.to),
+    [fixedExpenses, period.from, period.to],
+  );
+  const maintenanceAllocCents = useMemo(
+    () => maintenanceAllocatedCents(maintenance, period.from, period.to),
+    [maintenance, period.from, period.to],
+  );
+  const rideCostsActualCents = useMemo(() => {
+    let total = 0;
+    for (const c of rideCosts) total += c.actual_cents ?? c.estimated_cents;
+    return total;
+  }, [rideCosts]);
+  const totalExpensesCents =
+    fixedAllocatedCents + maintenanceAllocCents + rideCostsActualCents;
+
+  // Previous window's costs for delta calculation.
+  const prevTotalExpensesCents = useMemo(() => {
+    if (!compareWindow) return 0;
+    const fx = fixedExpenseAllocatedCents(
+      fixedExpenses,
+      compareWindow.from,
+      compareWindow.to,
+    );
+    const mt = maintenanceAllocatedCents(
+      maintenance,
+      compareWindow.from,
+      compareWindow.to,
+    );
+    const rc = prevRideCosts.reduce(
+      (s, c) => s + (c.actual_cents ?? c.estimated_cents),
+      0,
+    );
+    return fx + mt + rc;
+  }, [fixedExpenses, maintenance, prevRideCosts, compareWindow]);
+
+  const netProfitCents = (totals?.myEarned ?? 0) - totalExpensesCents;
+  const prevNetProfitCents =
+    (prevTotals?.myEarned ?? 0) - prevTotalExpensesCents;
+
+  const netProfitDelta = useMemo(() => {
+    if (!prevTotals) return null;
+    if (prevNetProfitCents === 0) return null;
+    return (
+      (netProfitCents - prevNetProfitCents) / Math.abs(prevNetProfitCents)
+    );
+  }, [netProfitCents, prevNetProfitCents, prevTotals]);
+
+  const hasAnyExpenses =
+    fixedExpenses.length > 0 ||
+    maintenance.length > 0 ||
+    rideCosts.length > 0;
+
+  // ── Per-vehicle expense breakdowns ─────────────────────────────
+  const fuelByVehicle = useMemo(
+    () => buildFuelByVehicle(rides ?? [], rideCosts),
+    [rides, rideCosts],
+  );
+  const maintenanceByVehicle = useMemo(
+    () =>
+      maintenanceAllocatedCentsByVehicle(
+        maintenance,
+        period.from,
+        period.to,
+      ),
+    [maintenance, period.from, period.to],
+  );
+  const fixedByVehicle = useMemo(
+    () =>
+      fixedExpenseAllocatedCentsByVehicle(
+        fixedExpenses,
+        period.from,
+        period.to,
+      ),
+    [fixedExpenses, period.from, period.to],
+  );
+
   const vehicleProf = useMemo(
-    () => (rides ? buildVehicleProf(rides, vehicles, windowDays) : []),
-    [rides, vehicles, windowDays],
+    () =>
+      rides
+        ? buildVehicleProf(
+            rides,
+            vehicles,
+            rideCosts,
+            fuelByVehicle,
+            maintenanceByVehicle,
+            fixedByVehicle,
+            windowDays,
+          )
+        : [],
+    [
+      rides,
+      vehicles,
+      rideCosts,
+      fuelByVehicle,
+      maintenanceByVehicle,
+      fixedByVehicle,
+      windowDays,
+    ],
   );
 
   // Compute deltas (current vs comparison).
@@ -482,6 +647,8 @@ export function Earnings() {
         myIncomeCents: totals?.myEarned ?? 0,
         fleetRevenueCents: totals?.fleetEarned ?? 0,
         myIncomeDelta,
+        netProfitCents,
+        totalExpensesCents,
         topClients,
         agingBuckets: [], // populated below — but Insights only needs totals
         hasCommissionConfigured: drivers.some(
@@ -489,9 +656,19 @@ export function Earnings() {
             !d.is_owner && (d.commission_rate_bps ?? 0) > 0,
         ),
         ownerDriverPresent: drivers.some((d) => d.is_owner === true),
+        hasAnyExpenses,
         periodLabel: period.label,
       }),
-    [totals, myIncomeDelta, topClients, drivers, period.label],
+    [
+      totals,
+      myIncomeDelta,
+      netProfitCents,
+      totalExpensesCents,
+      topClients,
+      drivers,
+      hasAnyExpenses,
+      period.label,
+    ],
   );
 
   const prevLabel =
@@ -543,29 +720,34 @@ export function Earnings() {
           accent
         />
         <EarningsKpi
-          label="Fleet revenue"
-          value={totals === null ? "—" : fmtMoney(totals.fleetEarned)}
-          delta={fleetDelta}
-          sparkColor="var(--success)"
-          hint={
-            totals && totals.fleetEarned > totals.myEarned
-              ? `${fmtMoney(totals.fleetEarned - totals.myEarned)} flowed to other drivers`
-              : "Includes everything your fleet collected"
-          }
-        />
-        <EarningsKpi
-          label="My income remaining"
+          label={hasAnyExpenses ? "Net profit" : "Net profit · setup needed"}
           value={
             totals === null
               ? "—"
-              : fmtMoney(Math.max(0, totals.myProjected - totals.myEarned))
+              : hasAnyExpenses
+                ? fmtMoney(netProfitCents)
+                : "—"
           }
+          delta={hasAnyExpenses ? netProfitDelta : null}
+          sparkColor={netProfitCents >= 0 ? "var(--success)" : "var(--danger)"}
           hint={
-            totals === null
-              ? undefined
-              : `${totals.bookedCount - totals.completedCount} ride${totals.bookedCount - totals.completedCount === 1 ? "" : "s"} still on the books`
+            hasAnyExpenses
+              ? `${fmtMoney(totalExpensesCents)} in costs · ${totals && totals.myEarned > 0 ? Math.round((netProfitCents / totals.myEarned) * 100) : 0}% margin`
+              : "Log fixed + per-ride costs on /expenses to see profit."
           }
-          sparkColor="var(--warn)"
+        />
+        <EarningsKpi
+          label="Fleet revenue"
+          value={totals === null ? "—" : fmtMoney(totals.fleetEarned)}
+          delta={fleetDelta}
+          sparkColor="var(--accent-strong)"
+          hint={
+            totals && totals.fleetEarned > totals.myEarned
+              ? `${fmtMoney(totals.fleetEarned - totals.myEarned)} flowed to other drivers`
+              : totals && totals.bookedCount - totals.completedCount > 0
+                ? `${fmtMoney(Math.max(0, totals.myProjected - totals.myEarned))} of yours still on the books`
+                : "Everything the fleet collected"
+          }
         />
         <EarningsKpi
           label="Avg / completed ride"
