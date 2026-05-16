@@ -257,13 +257,11 @@ function buildDriverPayouts(
 function buildVehicleProf(
   rides: Ride[],
   vehicles: Vehicle[],
-  rideCosts: RideCost[],
   fuelByVehicle: Map<string, number>,
   maintenanceByVehicle: Map<string, number>,
   fixedByVehicle: Map<string, number>,
   windowDays: number,
 ): VehicleProfRow[] {
-  void rideCosts; // included so the signature documents its intent
   const byVehicle = new Map<
     string,
     VehicleProfRow & { _days: Set<string> }
@@ -589,7 +587,6 @@ export function Earnings() {
         ? buildVehicleProf(
             rides,
             vehicles,
-            rideCosts,
             fuelByVehicle,
             maintenanceByVehicle,
             fixedByVehicle,
@@ -599,7 +596,6 @@ export function Earnings() {
     [
       rides,
       vehicles,
-      rideCosts,
       fuelByVehicle,
       maintenanceByVehicle,
       fixedByVehicle,
