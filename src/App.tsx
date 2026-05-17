@@ -34,6 +34,12 @@ const Drivers = lazy(() =>
 const Earnings = lazy(() =>
   import("./routes/Earnings").then((m) => ({ default: m.Earnings })),
 );
+const Expenses = lazy(() =>
+  import("./routes/Expenses").then((m) => ({ default: m.Expenses })),
+);
+const Invoices = lazy(() =>
+  import("./routes/Invoices").then((m) => ({ default: m.Invoices })),
+);
 const Install = lazy(() =>
   import("./routes/Install").then((m) => ({ default: m.Install })),
 );
@@ -172,6 +178,9 @@ function Gate() {
       <Routes>
         <Route element={<AppShell />}>
           <Route index element={<Dashboard />} />
+          {/* Vanity aliases — share-friendly URLs that all land on Today. */}
+          <Route path="dashboard" element={<Navigate to="/" replace />} />
+          <Route path="driver-portal" element={<Navigate to="/" replace />} />
           <Route path="rides" element={<Rides />} />
           <Route path="rides/new" element={<RideForm />} />
           <Route path="rides/:id" element={<RideDetail />} />
@@ -180,7 +189,8 @@ function Gate() {
           <Route path="clients" element={<Clients />} />
           <Route path="drivers" element={<Drivers />} />
           <Route path="earnings" element={<Earnings />} />
-          <Route path="invoices" element={<Navigate to="/earnings" replace />} />
+          <Route path="expenses" element={<Expenses />} />
+          <Route path="invoices" element={<Invoices />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

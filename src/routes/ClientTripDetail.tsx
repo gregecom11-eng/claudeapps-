@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
+  getInvoiceForRide,
   getMyRideDetails,
   getOrgSettings,
   getRide,
@@ -16,7 +17,12 @@ import { useRideRealtime } from "../lib/realtime";
 import { confirm, pushToast } from "../components/Notify";
 import { BUSINESS_TZ, fmtMoney, fmtTime } from "../lib/format";
 import { Icon } from "../components/Icon";
-import type { ActivityEvent, Ride, RideStatus } from "../lib/types";
+import type {
+  ActivityEvent,
+  Invoice,
+  Ride,
+  RideStatus,
+} from "../lib/types";
 import { StatusPill, fmtDayInLA, prettyStatus } from "./Client";
 
 const TIMELINE: RideStatus[] = [
@@ -48,6 +54,7 @@ export function ClientTripDetail() {
     vehicle_color: string | null;
     vehicle_plate: string | null;
   } | null>(null);
+  const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dispatchPhone, setDispatchPhone] = useState<string | null>(null);
@@ -60,11 +67,13 @@ export function ClientTripDetail() {
       getRide(id),
       listRideEvents(id),
       getMyRideDetails(id),
+      getInvoiceForRide(id).catch(() => null),
     ])
-      .then(([r, ev, det]) => {
+      .then(([r, ev, det, inv]) => {
         setRide(r);
         setEvents(ev);
         setChauffeur(det);
+        setInvoice(inv);
       })
       .catch((e) =>
         setError(e instanceof Error ? e.message : "Failed to load"),
@@ -476,6 +485,79 @@ export function ClientTripDetail() {
             >
               {fmtMoney(ride.total_cents)}
             </span>
+          </div>
+        </section>
+      ) : null}
+
+      {/* Invoice (only when one's been issued for this trip) */}
+      {invoice ? (
+        <section
+          className="rounded-[14px] p-5"
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+          }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="eyebrow mb-1.5">Invoice</p>
+              <div
+                className="tnum"
+                style={{ fontSize: 16, fontWeight: 600 }}
+              >
+                #{invoice.number ?? invoice.id.slice(0, 8)}
+              </div>
+              <div className="text-muted" style={{ fontSize: 12.5, marginTop: 4 }}>
+                {invoice.due_date
+                  ? invoice.status === "paid"
+                    ? `Paid${invoice.paid_at ? ` ${new Date(invoice.paid_at).toLocaleDateString("en-US", { timeZone: BUSINESS_TZ, month: "short", day: "numeric" })}` : ""}`
+                    : `Due ${invoice.due_date}`
+                  : "Paid at time of ride"}
+              </div>
+            </div>
+            <div className="text-right">
+              <div
+                style={{
+                  fontSize: 10.5,
+                  letterSpacing: "0.18em",
+                  textTransform: "uppercase",
+                  padding: "2px 8px",
+                  borderRadius: 3,
+                  fontWeight: 600,
+                  display: "inline-block",
+                  color:
+                    invoice.status === "paid"
+                      ? "var(--success)"
+                      : invoice.status === "overdue" ||
+                          (invoice.status === "sent" &&
+                            invoice.due_date &&
+                            invoice.due_date < new Date().toISOString().slice(0, 10))
+                        ? "var(--danger)"
+                        : "var(--accent)",
+                  background:
+                    invoice.status === "paid"
+                      ? "color-mix(in oklab, var(--success) 12%, transparent)"
+                      : invoice.status === "overdue" ||
+                          (invoice.status === "sent" &&
+                            invoice.due_date &&
+                            invoice.due_date < new Date().toISOString().slice(0, 10))
+                        ? "color-mix(in oklab, var(--danger) 12%, transparent)"
+                        : "color-mix(in oklab, var(--accent) 12%, transparent)",
+                }}
+              >
+                {invoice.status === "sent" &&
+                invoice.due_date &&
+                invoice.due_date < new Date().toISOString().slice(0, 10)
+                  ? "overdue"
+                  : invoice.status}
+              </div>
+              <div
+                className="display-num mt-2"
+                style={{ fontSize: 22 }}
+              >
+                {fmtMoney(invoice.amount_cents)}
+              </div>
+            </div>
           </div>
         </section>
       ) : null}

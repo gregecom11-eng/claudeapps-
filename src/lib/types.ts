@@ -66,6 +66,10 @@ export type Driver = {
   last_seen_at?: string | null;
   notes: string | null;
   created_at: string;
+  // Added in migration 17_owner_commission.sql. Optional so the type
+  // stays compatible if the migration hasn't been applied yet.
+  is_owner?: boolean;
+  commission_rate_bps?: number;
 };
 
 export type Vehicle = {
@@ -203,4 +207,75 @@ export type NotificationInboxRow = {
   pickup_at: string | null;
   pickup_address: string | null;
   dropoff_address: string | null;
+};
+
+// ── Expenses (migration 18_expenses.sql) ───────────────────────────
+
+export type FixedExpenseCategory =
+  | "insurance"
+  | "lease"
+  | "phone"
+  | "software"
+  | "rent"
+  | "subscription"
+  | "other";
+
+export type FixedExpenseCadence = "weekly" | "monthly" | "annual";
+
+export type ExpenseFixed = {
+  id: string;
+  category: FixedExpenseCategory;
+  label: string;
+  amount_cents: number;
+  cadence: FixedExpenseCadence;
+  effective_from: string; // YYYY-MM-DD
+  effective_to: string | null;
+  vehicle_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RideCostCategory =
+  | "gas"
+  | "tolls"
+  | "parking"
+  | "amenities"
+  | "tip_out"
+  | "other";
+
+export type RideCost = {
+  id: string;
+  ride_id: string;
+  category: RideCostCategory;
+  estimated_cents: number;
+  actual_cents: number | null;
+  note: string | null;
+  added_by: string | null;
+  added_at: string;
+  confirmed_at: string | null;
+};
+
+export type MaintenanceCategory =
+  | "oil"
+  | "tires"
+  | "brakes"
+  | "detailing"
+  | "registration"
+  | "smog"
+  | "repair"
+  | "other";
+
+export type VehicleMaintenance = {
+  id: string;
+  vehicle_id: string;
+  category: MaintenanceCategory;
+  label: string;
+  amount_cents: number;
+  serviced_at: string; // YYYY-MM-DD
+  odometer_at_service: number | null;
+  service_interval_days: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 };

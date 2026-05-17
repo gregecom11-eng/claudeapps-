@@ -533,6 +533,22 @@ export async function listInvoices(): Promise<import("./types").Invoice[]> {
   return (data ?? []) as import("./types").Invoice[];
 }
 
+// Single ride's invoice (if one exists). Returns null when the ride
+// hasn't been invoiced yet.
+export async function getInvoiceForRide(
+  rideId: string,
+): Promise<import("./types").Invoice | null> {
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("*")
+    .eq("ride_id", rideId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as import("./types").Invoice | null) ?? null;
+}
+
 export async function nextInvoiceNumber(): Promise<string> {
   const { data, error } = await supabase.rpc("next_invoice_number");
   if (error) throw error;
@@ -583,25 +599,62 @@ export async function markInvoicePaid(id: string): Promise<void> {
   });
 }
 
+export async function markInvoiceVoid(id: string): Promise<void> {
+  await updateInvoice(id, {
+    status: "void",
+    paid_at: null,
+  });
+}
+
+export async function markInvoiceOverdue(id: string): Promise<void> {
+  await updateInvoice(id, { status: "overdue" });
+}
+
+export async function markInvoiceSent(id: string): Promise<void> {
+  await updateInvoice(id, { status: "sent" });
+}
+
 export async function deleteInvoice(id: string): Promise<void> {
   const { error } = await supabase.from("invoices").delete().eq("id", id);
   if (error) throw error;
 }
 
 // ── Org settings (singleton) ───────────────────────────────────────
+//
+// Per-trip-type × per-category default costs. Trigger
+// public.apply_ride_cost_defaults reads this on each ride insert.
+export type RideCostDefaults = Record<
+  "airport" | "p2p" | "hourly",
+  Record<"gas" | "tolls" | "parking" | "amenities", number>
+>;
+
+export const EMPTY_RIDE_COST_DEFAULTS: RideCostDefaults = {
+  airport: { gas: 0, tolls: 0, parking: 0, amenities: 0 },
+  p2p: { gas: 0, tolls: 0, parking: 0, amenities: 0 },
+  hourly: { gas: 0, tolls: 0, parking: 0, amenities: 0 },
+};
+
 export async function getOrgSettings(): Promise<{
   brand_name: string | null;
   dispatch_phone: string | null;
   dispatch_email: string | null;
   invoice_prefix: string | null;
+  ride_cost_defaults: RideCostDefaults;
 }> {
   const { data, error } = await supabase
     .from("org_settings")
-    .select("brand_name, dispatch_phone, dispatch_email, invoice_prefix")
+    .select(
+      "brand_name, dispatch_phone, dispatch_email, invoice_prefix, ride_cost_defaults",
+    )
     .eq("id", 1)
     .single();
   if (error) throw error;
-  return data;
+  return {
+    ...data,
+    ride_cost_defaults:
+      (data?.ride_cost_defaults as RideCostDefaults) ??
+      EMPTY_RIDE_COST_DEFAULTS,
+  };
 }
 
 export async function updateOrgSettings(patch: {
@@ -609,6 +662,7 @@ export async function updateOrgSettings(patch: {
   dispatch_phone?: string | null;
   dispatch_email?: string | null;
   invoice_prefix?: string | null;
+  ride_cost_defaults?: RideCostDefaults;
 }): Promise<void> {
   const { error } = await supabase
     .from("org_settings")
@@ -655,6 +709,122 @@ export async function listEvents(limit = 30): Promise<ActivityEvent[]> {
     .limit(limit);
   if (error) throw error;
   return data ?? [];
+}
+
+// ── Expenses: fixed ────────────────────────────────────────────────
+// Soft-archive via effective_to instead of delete so historical
+// allocations remain stable. Direct table writes (RLS-protected) —
+// these aren't customer-facing PII so no SECURITY DEFINER RPC needed
+// for v1.
+export async function listFixedExpenses(): Promise<
+  import("./types").ExpenseFixed[]
+> {
+  const { data, error } = await supabase
+    .from("expenses_fixed")
+    .select("*")
+    .order("effective_from", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as import("./types").ExpenseFixed[];
+}
+export async function upsertFixedExpense(
+  e: Partial<import("./types").ExpenseFixed>,
+): Promise<import("./types").ExpenseFixed> {
+  const { data, error } = await supabase
+    .from("expenses_fixed")
+    .upsert(e)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as import("./types").ExpenseFixed;
+}
+export async function deleteFixedExpense(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("expenses_fixed")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
+
+// ── Expenses: per-ride costs ───────────────────────────────────────
+export async function listRideCosts(
+  rideId: string,
+): Promise<import("./types").RideCost[]> {
+  const { data, error } = await supabase
+    .from("ride_costs")
+    .select("*")
+    .eq("ride_id", rideId)
+    .order("added_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as import("./types").RideCost[];
+}
+
+// Bulk-load for the Earnings page — limit-bounded so a year window
+// stays under a few hundred rows.
+export async function listRideCostsForRides(
+  rideIds: string[],
+): Promise<import("./types").RideCost[]> {
+  if (rideIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("ride_costs")
+    .select("*")
+    .in("ride_id", rideIds);
+  if (error) throw error;
+  return (data ?? []) as import("./types").RideCost[];
+}
+
+export async function upsertRideCost(
+  c: Partial<import("./types").RideCost>,
+): Promise<import("./types").RideCost> {
+  const { data: userResp } = await supabase.auth.getUser();
+  const payload = {
+    ...c,
+    added_by: c.added_by ?? userResp.user?.id ?? null,
+    confirmed_at:
+      c.actual_cents !== null && c.actual_cents !== undefined
+        ? (c.confirmed_at ?? new Date().toISOString())
+        : null,
+  };
+  const { data, error } = await supabase
+    .from("ride_costs")
+    .upsert(payload)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as import("./types").RideCost;
+}
+export async function deleteRideCost(id: string): Promise<void> {
+  const { error } = await supabase.from("ride_costs").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ── Expenses: vehicle maintenance ──────────────────────────────────
+export async function listMaintenance(): Promise<
+  import("./types").VehicleMaintenance[]
+> {
+  const { data, error } = await supabase
+    .from("vehicle_maintenance")
+    .select("*")
+    .order("serviced_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as import("./types").VehicleMaintenance[];
+}
+export async function upsertMaintenance(
+  m: Partial<import("./types").VehicleMaintenance>,
+): Promise<import("./types").VehicleMaintenance> {
+  const { data, error } = await supabase
+    .from("vehicle_maintenance")
+    .upsert(m)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as import("./types").VehicleMaintenance;
+}
+export async function deleteMaintenance(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("vehicle_maintenance")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
 }
 
 // Status-change events for a single ride. Used by the driver sheet to

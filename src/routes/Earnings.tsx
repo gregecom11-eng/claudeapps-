@@ -1,642 +1,810 @@
-// Earnings — owner's revenue dashboard.
+// Earnings — owner's revenue, profit, and decision-support view.
 //
-// One page, one timeline, one truth: earned vs projected. The period
-// switcher drives every panel below it. Realtime listens to ride
-// changes — adding, cancelling, or marking a ride completed updates
-// every number and chart in place, no refresh needed.
+// Redesigned per dispatch-101/Earnings.html. Top: period chips with a
+// compare-to dropdown. Below: 4 KPI cards (My income, Fleet revenue,
+// Remaining, Avg/ride), one big chart, then a grid of insights, service
+// mix, AR aging, top clients, scenario knobs, driver payouts, and
+// vehicle profitability.
 //
-// Earned   = sum(total_cents) for completed, non-cancelled rides in window
-// Projected = sum(total_cents) for non-cancelled rides in window
-// Remaining = Projected − Earned
+// Two perspectives are kept distinct everywhere:
+//   - My income     = what the owner-operator personally takes home
+//                     (their driven rides full-fare + commission share
+//                      on rides driven by others)
+//   - Fleet revenue = total collected, regardless of who drove
+//
+// Week defaults Mon → Sun. All windows anchored to America/Los_Angeles.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import {
-  listClients,
   listAllDrivers,
+  listClients,
+  listFixedExpenses,
+  listInvoices,
+  listMaintenance,
+  listRideCostsForRides,
   listRides,
+  listVehicles,
 } from "../lib/api";
-import { BUSINESS_TZ, fmtMoney } from "../lib/format";
+import { fmtMoney } from "../lib/format";
 import { useRideRealtime } from "../lib/realtime";
-import { KpiCard } from "../components/KpiCard";
 import {
-  CumulativeRevenueChart,
-  DailyRevenueBars,
-  type RevenuePoint,
-} from "../components/RevenueCharts";
-import type { Client, Driver, Ride } from "../lib/types";
+  buildOwnerLens,
+  fleetEarnedCents,
+  fleetProjectedCents,
+  inferTripType,
+  myEarnedCents,
+  myProjectedCents,
+  type TripType,
+} from "../lib/earnings";
+import {
+  fixedExpenseAllocatedCents,
+  fixedExpenseAllocatedCentsByVehicle,
+  maintenanceAllocatedCents,
+  maintenanceAllocatedCentsByVehicle,
+} from "../lib/expenses";
+import type {
+  Client,
+  Driver,
+  ExpenseFixed,
+  Invoice,
+  Ride,
+  RideCost,
+  Vehicle,
+  VehicleMaintenance,
+} from "../lib/types";
 
-type PeriodId = "today" | "week" | "month" | "quarter" | "year";
+import {
+  EarningsDateControls,
+  EarningsKpi,
+  type CompareMode,
+} from "../components/earnings/atoms";
+import {
+  eachDay,
+  laDayKey,
+  periodFor,
+  type Period,
+  type PeriodId,
+} from "../components/earnings/period";
+import { EarningsRevenueChart } from "../components/earnings/RevenueChart";
+import { EarningsServiceMix } from "../components/earnings/ServiceMix";
+import {
+  EarningsTopClients,
+  type TopClientRow,
+} from "../components/earnings/TopClients";
+import { EarningsARAging } from "../components/earnings/ARAging";
+import {
+  EarningsInsights,
+  buildInsights,
+} from "../components/earnings/Insights";
+import {
+  EarningsDriverPayouts,
+  type DriverPayoutRow,
+} from "../components/earnings/DriverPayouts";
+import { EarningsForecast } from "../components/earnings/Forecast";
+import {
+  EarningsVehicleProf,
+  type VehicleProfRow,
+} from "../components/earnings/VehicleProf";
 
-type Period = {
-  id: PeriodId;
-  label: string;
-  from: Date;
-  to: Date;
+// ── Aggregation helpers ───────────────────────────────────────────
+
+type WindowTotals = {
+  myEarned: number;
+  myProjected: number;
+  fleetEarned: number;
+  fleetProjected: number;
+  completedCount: number;
+  bookedCount: number;
+  avgCompletedCents: number;
 };
 
-// ── Period boundaries, anchored to the business timezone ─────────
-//
-// We need start/end of each period as actual UTC instants so they line
-// up with rides.pickup_at. Trick: render "now" in LA to get its
-// civil parts (Y/M/D/H/M), then construct UTC instants by combining
-// those civil parts with the LA UTC offset for that day.
-
-function laOffsetFor(d: Date): string {
-  const part = new Intl.DateTimeFormat("en-US", {
-    timeZone: BUSINESS_TZ,
-    timeZoneName: "longOffset",
-  })
-    .formatToParts(d)
-    .find((p) => p.type === "timeZoneName")?.value;
-  return part?.replace("GMT", "") || "+00:00";
-}
-
-function laCivil(d: Date): {
-  year: number;
-  month: number;
-  day: number;
-} {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: BUSINESS_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
-  const [y, m, dd] = parts.split("-").map((s) => parseInt(s, 10));
-  return { year: y, month: m, day: dd };
-}
-
-function laInstant(year: number, month: number, day: number, end = false): Date {
-  // Construct a Date for midnight (or 23:59:59.999) on that LA civil day.
-  const probe = new Date(
-    `${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}T12:00:00Z`,
-  );
-  const offset = laOffsetFor(probe);
-  const time = end ? "23:59:59.999" : "00:00:00.000";
-  return new Date(
-    `${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}T${time}${offset}`,
-  );
-}
-
-function pad(n: number, w: number): string {
-  return String(n).padStart(w, "0");
-}
-
-function periodFor(id: PeriodId, now = new Date()): Period {
-  const c = laCivil(now);
-  const startToday = laInstant(c.year, c.month, c.day, false);
-  const endToday = laInstant(c.year, c.month, c.day, true);
-
-  if (id === "today") {
-    return { id, label: "Today", from: startToday, to: endToday };
+function aggregateWindow(
+  rides: Ride[],
+  lens: ReturnType<typeof buildOwnerLens>,
+): WindowTotals {
+  let myEarned = 0,
+    myProjected = 0,
+    fleetEarned = 0,
+    fleetProjected = 0,
+    completedCount = 0,
+    bookedCount = 0,
+    myCompletedAcc = 0,
+    myCompletedCount = 0;
+  for (const r of rides) {
+    if (r.status === "cancelled") continue;
+    bookedCount++;
+    fleetProjected += fleetProjectedCents(r);
+    myProjected += myProjectedCents(r, lens);
+    if (r.status === "completed") {
+      completedCount++;
+      fleetEarned += fleetEarnedCents(r);
+      const mine = myEarnedCents(r, lens);
+      myEarned += mine;
+      if (mine > 0) {
+        myCompletedAcc += mine;
+        myCompletedCount++;
+      }
+    }
   }
+  return {
+    myEarned,
+    myProjected,
+    fleetEarned,
+    fleetProjected,
+    completedCount,
+    bookedCount,
+    avgCompletedCents:
+      myCompletedCount > 0 ? myCompletedAcc / myCompletedCount : 0,
+  };
+}
 
-  if (id === "week") {
-    // Week = Mon–Sun, anchored in LA.
-    const weekdayMap: Record<string, number> = {
-      Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
-    };
-    const wkName = new Intl.DateTimeFormat("en-US", {
-      timeZone: BUSINESS_TZ,
-      weekday: "short",
-    }).format(now);
-    const laDow = weekdayMap[wkName] ?? 0;
-    const daysSinceMon = (laDow + 6) % 7; // Mon=0
-    const monStart = addDays(startToday, -daysSinceMon);
-    const sunCivil = laCivil(addDays(monStart, 6));
-    return {
+function dailySeries(
+  rides: Ride[],
+  lens: ReturnType<typeof buildOwnerLens>,
+  period: Period,
+): { day: string; cents: number }[] {
+  const days = eachDay(period.from, period.to);
+  const map = new Map<string, number>();
+  for (const d of days) map.set(d, 0);
+  for (const r of rides) {
+    if (r.status === "cancelled") continue;
+    const k = laDayKey(r.pickup_at);
+    if (!map.has(k)) continue;
+    const cents =
+      r.status === "completed"
+        ? myEarnedCents(r, lens)
+        : myProjectedCents(r, lens);
+    map.set(k, (map.get(k) ?? 0) + cents);
+  }
+  return days.map((d) => ({ day: d, cents: map.get(d) ?? 0 }));
+}
+
+function dailySeriesByCalendarDays(
+  rides: Ride[],
+  lens: ReturnType<typeof buildOwnerLens>,
+  from: Date,
+  to: Date,
+): { day: string; cents: number }[] {
+  const days = eachDay(from, to);
+  const map = new Map<string, number>();
+  for (const d of days) map.set(d, 0);
+  for (const r of rides) {
+    if (r.status === "cancelled") continue;
+    const k = laDayKey(r.pickup_at);
+    if (!map.has(k)) continue;
+    const cents =
+      r.status === "completed"
+        ? myEarnedCents(r, lens)
+        : myProjectedCents(r, lens);
+    map.set(k, (map.get(k) ?? 0) + cents);
+  }
+  return days.map((d) => ({ day: d, cents: map.get(d) ?? 0 }));
+}
+
+function buildTopClients(
+  rides: Ride[],
+  clients: Client[],
+): TopClientRow[] {
+  const byClient = new Map<string, TopClientRow>();
+  for (const r of rides) {
+    if (r.status === "cancelled") continue;
+    const id = r.client_id ?? `walkin:${r.passenger_name}`;
+    const slot = byClient.get(id) ?? {
       id,
-      label: "This week",
-      from: monStart,
-      to: laInstant(sunCivil.year, sunCivil.month, sunCivil.day, true),
+      name: r.client_id
+        ? clients.find((c) => c.id === r.client_id)?.name ?? "Unknown client"
+        : r.passenger_name || "Walk-in",
+      bookedCents: 0,
+      earnedCents: 0,
+      rideCount: 0,
     };
+    slot.bookedCents += r.total_cents;
+    slot.rideCount++;
+    if (r.status === "completed") slot.earnedCents += r.total_cents;
+    byClient.set(id, slot);
   }
-
-  if (id === "month") {
-    const start = laInstant(c.year, c.month, 1);
-    const lastDay = daysInMonth(c.year, c.month);
-    const end = laInstant(c.year, c.month, lastDay, true);
-    return { id, label: "This month", from: start, to: end };
-  }
-
-  if (id === "quarter") {
-    const qStartMonth = Math.floor((c.month - 1) / 3) * 3 + 1;
-    const start = laInstant(c.year, qStartMonth, 1);
-    const qEndMonth = qStartMonth + 2;
-    const lastDay = daysInMonth(c.year, qEndMonth);
-    const end = laInstant(c.year, qEndMonth, lastDay, true);
-    return { id, label: "This quarter", from: start, to: end };
-  }
-
-  // year
-  const start = laInstant(c.year, 1, 1);
-  const end = laInstant(c.year, 12, 31, true);
-  return { id, label: c.year.toString(), from: start, to: end };
+  return Array.from(byClient.values())
+    .sort((a, b) => b.bookedCents - a.bookedCents)
+    .slice(0, 8);
 }
 
-function daysInMonth(y: number, m: number): number {
-  return new Date(Date.UTC(y, m, 0)).getUTCDate();
-}
-
-function addDays(d: Date, n: number): Date {
-  return new Date(d.getTime() + n * 86400_000);
-}
-
-// LA-day key for any UTC instant. Used to bucket rides into days.
-function laDayKey(iso: string): string {
-  const c = laCivil(new Date(iso));
-  return `${pad(c.year, 4)}-${pad(c.month, 2)}-${pad(c.day, 2)}`;
-}
-
-function dayKeyOfDate(d: Date): string {
-  const c = laCivil(d);
-  return `${pad(c.year, 4)}-${pad(c.month, 2)}-${pad(c.day, 2)}`;
-}
-
-function fmtDollars(cents: number): string {
-  return Math.round(cents / 100).toLocaleString();
-}
-
-function eachDay(from: Date, to: Date): string[] {
-  const out: string[] = [];
-  const startCivil = laCivil(from);
-  let cur = laInstant(startCivil.year, startCivil.month, startCivil.day);
-  while (cur.getTime() <= to.getTime()) {
-    out.push(dayKeyOfDate(cur));
-    cur = addDays(cur, 1);
+function buildServiceMix(rides: Ride[]): Record<TripType, number> {
+  const out: Record<TripType, number> = {
+    airport: 0,
+    p2p: 0,
+    hourly: 0,
+    other: 0,
+  };
+  for (const r of rides) {
+    if (r.status === "cancelled") continue;
+    out[inferTripType(r)] += r.total_cents;
   }
   return out;
 }
 
-// ── The page ──────────────────────────────────────────────────────
+function buildDriverPayouts(
+  rides: Ride[],
+  drivers: Driver[],
+  lens: ReturnType<typeof buildOwnerLens>,
+): DriverPayoutRow[] {
+  const byDriver = new Map<string, DriverPayoutRow>();
+  for (const r of rides) {
+    if (r.status !== "completed") continue;
+    if (!r.driver_id) continue;
+    const d = drivers.find((dr) => dr.id === r.driver_id);
+    const slot = byDriver.get(r.driver_id) ?? {
+      id: r.driver_id,
+      name: d?.full_name ?? "Unknown driver",
+      isOwner: d?.is_owner === true,
+      commissionBps:
+        typeof d?.commission_rate_bps === "number"
+          ? d.commission_rate_bps
+          : 0,
+      rideCount: 0,
+      grossCents: 0,
+      ownerShareCents: 0,
+    };
+    slot.rideCount++;
+    slot.grossCents += r.total_cents;
+    slot.ownerShareCents += myEarnedCents(r, lens);
+    byDriver.set(r.driver_id, slot);
+  }
+  return Array.from(byDriver.values()).sort(
+    (a, b) => b.grossCents - a.grossCents,
+  );
+}
+
+function buildVehicleProf(
+  rides: Ride[],
+  vehicles: Vehicle[],
+  fuelByVehicle: Map<string, number>,
+  maintenanceByVehicle: Map<string, number>,
+  fixedByVehicle: Map<string, number>,
+  windowDays: number,
+): VehicleProfRow[] {
+  const byVehicle = new Map<
+    string,
+    VehicleProfRow & { _days: Set<string> }
+  >();
+  for (const r of rides) {
+    if (r.status === "cancelled") continue;
+    if (!r.vehicle_id) continue;
+    const v = vehicles.find((vh) => vh.id === r.vehicle_id);
+    const slot = byVehicle.get(r.vehicle_id) ?? {
+      id: r.vehicle_id,
+      name: v?.display_name ?? "Unknown vehicle",
+      plate: v?.plate ?? null,
+      rideCount: 0,
+      revenueCents: 0,
+      fuelCents: 0,
+      maintenanceCents: 0,
+      fixedCents: 0,
+      utilization: 0,
+      _days: new Set<string>(),
+    };
+    slot.rideCount++;
+    slot.revenueCents += r.total_cents;
+    slot._days.add(laDayKey(r.pickup_at));
+    byVehicle.set(r.vehicle_id, slot);
+  }
+  return Array.from(byVehicle.values())
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      plate: s.plate,
+      rideCount: s.rideCount,
+      revenueCents: s.revenueCents,
+      fuelCents: fuelByVehicle.get(s.id) ?? 0,
+      maintenanceCents: maintenanceByVehicle.get(s.id) ?? 0,
+      fixedCents: fixedByVehicle.get(s.id) ?? 0,
+      utilization: Math.min(
+        1,
+        windowDays > 0 ? s._days.size / windowDays : 0,
+      ),
+    }))
+    .sort((a, b) => b.revenueCents - a.revenueCents);
+}
+
+// Sum gas-category ride costs per vehicle for rides in the window.
+// Uses actual when confirmed, else falls back to estimate.
+function buildFuelByVehicle(
+  rides: Ride[],
+  rideCosts: RideCost[],
+): Map<string, number> {
+  const rideToVehicle = new Map<string, string>();
+  for (const r of rides) {
+    if (r.vehicle_id) rideToVehicle.set(r.id, r.vehicle_id);
+  }
+  const out = new Map<string, number>();
+  for (const c of rideCosts) {
+    if (c.category !== "gas") continue;
+    const vid = rideToVehicle.get(c.ride_id);
+    if (!vid) continue;
+    const cents = c.actual_cents ?? c.estimated_cents;
+    out.set(vid, (out.get(vid) ?? 0) + cents);
+  }
+  return out;
+}
+
+// ── Header bar ────────────────────────────────────────────────────
+
+function EarningsPageHeader({ period }: { period: Period }) {
+  return (
+    <div
+      className="flex items-end justify-between gap-6 pb-7 mb-7 flex-wrap"
+      style={{ borderBottom: "1px solid var(--border)" }}
+    >
+      <div className="min-w-0">
+        <p className="eyebrow mb-3" style={{ letterSpacing: "0.22em" }}>
+          Earnings · {period.label}
+        </p>
+        <h1
+          className="serif"
+          style={{
+            fontSize: 44,
+            lineHeight: 1.05,
+            letterSpacing: "-0.015em",
+            fontWeight: 500,
+          }}
+        >
+          The{" "}
+          <span style={{ fontStyle: "italic", color: "var(--accent)" }}>
+            numbers
+          </span>
+          , told plainly.
+        </h1>
+        <p
+          className="text-muted mt-3"
+          style={{ fontSize: 14.5, maxWidth: 560, lineHeight: 1.55 }}
+        >
+          Your income, the fleet's revenue, what's still on the books, and a
+          quiet running tally of what's working — so you can decide what to
+          do next.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────
+
 export function Earnings() {
-  const [periodId, setPeriodId] = useState<PeriodId>("month");
+  const [periodId, setPeriodId] = useState<PeriodId>("week");
+  const [compareMode, setCompareMode] = useState<CompareMode>("prev");
   const period = useMemo(() => periodFor(periodId), [periodId]);
 
   const [rides, setRides] = useState<Ride[] | null>(null);
+  const [prevRides, setPrevRides] = useState<Ride[] | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [fixedExpenses, setFixedExpenses] = useState<ExpenseFixed[]>([]);
+  const [maintenance, setMaintenance] = useState<VehicleMaintenance[]>([]);
+  const [rideCosts, setRideCosts] = useState<RideCost[]>([]);
+  const [prevRideCosts, setPrevRideCosts] = useState<RideCost[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [pulse, setPulse] = useState(0);
+
+  // Resolve the comparison window from the compareMode + period.
+  const compareWindow = useMemo(() => {
+    if (compareMode === "none") return null;
+    if (compareMode === "yoy") {
+      return { from: period.yoyFrom, to: period.yoyTo };
+    }
+    return { from: period.prevFrom, to: period.prevTo };
+  }, [compareMode, period]);
 
   const load = useCallback(async () => {
     try {
-      const [rs, cs, ds] = await Promise.all([
+      const [rs, prs, cs, ds, vs, invs, fx, mt] = await Promise.all([
         listRides({
           from: period.from.toISOString(),
           to: period.to.toISOString(),
           limit: 1000,
         }),
+        compareWindow
+          ? listRides({
+              from: compareWindow.from.toISOString(),
+              to: compareWindow.to.toISOString(),
+              limit: 1000,
+            })
+          : Promise.resolve([]),
         listClients(),
         listAllDrivers(),
+        listVehicles(),
+        listInvoices().catch(() => []),
+        listFixedExpenses().catch(() => []),
+        listMaintenance().catch(() => []),
       ]);
       setRides(rs);
+      setPrevRides(compareWindow ? prs : null);
       setClients(cs);
       setDrivers(ds);
+      setVehicles(vs);
+      setInvoices(invs);
+      setFixedExpenses(fx);
+      setMaintenance(mt);
+      // Per-ride costs for both windows. Issued as separate queries so a
+      // missing migration on either side doesn't blank the whole page.
+      const rcCurr =
+        rs.length > 0
+          ? await listRideCostsForRides(rs.map((r) => r.id)).catch(() => [])
+          : [];
+      setRideCosts(rcCurr);
+      const rcPrev =
+        compareWindow && prs.length > 0
+          ? await listRideCostsForRides(prs.map((r) => r.id)).catch(() => [])
+          : [];
+      setPrevRideCosts(rcPrev);
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     }
-  }, [period.from, period.to]);
+  }, [period.from, period.to, compareWindow]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   useRideRealtime(() => {
-    setPulse((p) => p + 1);
     load();
   });
 
-  const series = useMemo<RevenuePoint[]>(() => {
-    const days = eachDay(period.from, period.to);
-    const map = new Map<string, { earned: number; projected: number }>();
-    for (const d of days) map.set(d, { earned: 0, projected: 0 });
-    for (const r of rides ?? []) {
-      if (r.status === "cancelled") continue;
-      const k = laDayKey(r.pickup_at);
-      const slot = map.get(k);
-      if (!slot) continue;
-      if (r.status === "completed") slot.earned += r.total_cents;
-      else slot.projected += r.total_cents;
-    }
-    return days.map((d) => ({
-      day: d,
-      earnedCents: map.get(d)!.earned,
-      projectedCents: map.get(d)!.projected,
-    }));
-  }, [rides, period.from, period.to]);
+  const lens = useMemo(() => buildOwnerLens(drivers), [drivers]);
 
-  const totals = useMemo(() => {
-    let earned = 0;
-    let projected = 0; // includes earned
-    let completedCount = 0;
-    let bookedCount = 0;
-    for (const r of rides ?? []) {
-      if (r.status === "cancelled") continue;
-      bookedCount++;
-      projected += r.total_cents;
-      if (r.status === "completed") {
-        earned += r.total_cents;
-        completedCount++;
-      }
-    }
-    return {
-      earned,
-      projected,
-      remaining: Math.max(0, projected - earned),
-      completedCount,
-      bookedCount,
-      avgCompleted: completedCount > 0 ? earned / completedCount : 0,
-    };
-  }, [rides]);
+  const totals = useMemo(
+    () =>
+      rides ? aggregateWindow(rides, lens) : null,
+    [rides, lens],
+  );
+  const prevTotals = useMemo(
+    () => (prevRides ? aggregateWindow(prevRides, lens) : null),
+    [prevRides, lens],
+  );
 
-  const todayIndex = useMemo(() => {
-    const today = dayKeyOfDate(new Date());
-    const idx = series.findIndex((p) => p.day === today);
-    if (idx >= 0) return idx;
-    // If "today" is past the window, treat the whole window as earned.
-    if (series.length > 0 && today > series[series.length - 1].day) {
-      return series.length - 1;
-    }
-    // If "today" is before the window starts, nothing's earned.
-    return -1;
-  }, [series]);
+  const series = useMemo(
+    () => (rides ? dailySeries(rides, lens, period) : []),
+    [rides, lens, period],
+  );
+  const prevSeries = useMemo(() => {
+    if (!prevRides || !compareWindow) return null;
+    return dailySeriesByCalendarDays(
+      prevRides,
+      lens,
+      compareWindow.from,
+      compareWindow.to,
+    );
+  }, [prevRides, lens, compareWindow]);
+
+  const serviceMix = useMemo(
+    () => (rides ? buildServiceMix(rides) : {
+      airport: 0, p2p: 0, hourly: 0, other: 0,
+    }),
+    [rides],
+  );
 
   const topClients = useMemo(
-    () =>
-      topByGroup(
-        rides ?? [],
-        (r) => r.client_id,
-        (id) => clients.find((c) => c.id === id)?.name ?? "Unknown client",
-      ),
+    () => (rides ? buildTopClients(rides, clients) : []),
     [rides, clients],
   );
-  const topDrivers = useMemo(
-    () =>
-      topByGroup(
-        rides ?? [],
-        (r) => r.driver_id,
-        (id) => drivers.find((d) => d.id === id)?.full_name ?? "Unknown driver",
-      ),
-    [rides, drivers],
+
+  const driverPayouts = useMemo(
+    () => (rides ? buildDriverPayouts(rides, drivers, lens) : []),
+    [rides, drivers, lens],
   );
+
+  const windowDays = useMemo(() => {
+    return Math.max(
+      1,
+      Math.round(
+        (period.to.getTime() - period.from.getTime()) / 86400_000,
+      ) + 1 - 0, // inclusive
+    );
+  }, [period]);
+
+  // ── Expense allocations for the current window ─────────────────
+  const fixedAllocatedCents = useMemo(
+    () =>
+      fixedExpenseAllocatedCents(fixedExpenses, period.from, period.to),
+    [fixedExpenses, period.from, period.to],
+  );
+  const maintenanceAllocCents = useMemo(
+    () => maintenanceAllocatedCents(maintenance, period.from, period.to),
+    [maintenance, period.from, period.to],
+  );
+  const rideCostsActualCents = useMemo(() => {
+    let total = 0;
+    for (const c of rideCosts) total += c.actual_cents ?? c.estimated_cents;
+    return total;
+  }, [rideCosts]);
+  const totalExpensesCents =
+    fixedAllocatedCents + maintenanceAllocCents + rideCostsActualCents;
+
+  // Previous window's costs for delta calculation.
+  const prevTotalExpensesCents = useMemo(() => {
+    if (!compareWindow) return 0;
+    const fx = fixedExpenseAllocatedCents(
+      fixedExpenses,
+      compareWindow.from,
+      compareWindow.to,
+    );
+    const mt = maintenanceAllocatedCents(
+      maintenance,
+      compareWindow.from,
+      compareWindow.to,
+    );
+    const rc = prevRideCosts.reduce(
+      (s, c) => s + (c.actual_cents ?? c.estimated_cents),
+      0,
+    );
+    return fx + mt + rc;
+  }, [fixedExpenses, maintenance, prevRideCosts, compareWindow]);
+
+  const netProfitCents = (totals?.myEarned ?? 0) - totalExpensesCents;
+  const prevNetProfitCents =
+    (prevTotals?.myEarned ?? 0) - prevTotalExpensesCents;
+
+  const netProfitDelta = useMemo(() => {
+    if (!prevTotals) return null;
+    if (prevNetProfitCents === 0) return null;
+    return (
+      (netProfitCents - prevNetProfitCents) / Math.abs(prevNetProfitCents)
+    );
+  }, [netProfitCents, prevNetProfitCents, prevTotals]);
+
+  const hasAnyExpenses =
+    fixedExpenses.length > 0 ||
+    maintenance.length > 0 ||
+    rideCosts.length > 0;
+
+  // ── Per-vehicle expense breakdowns ─────────────────────────────
+  const fuelByVehicle = useMemo(
+    () => buildFuelByVehicle(rides ?? [], rideCosts),
+    [rides, rideCosts],
+  );
+  const maintenanceByVehicle = useMemo(
+    () =>
+      maintenanceAllocatedCentsByVehicle(
+        maintenance,
+        period.from,
+        period.to,
+      ),
+    [maintenance, period.from, period.to],
+  );
+  const fixedByVehicle = useMemo(
+    () =>
+      fixedExpenseAllocatedCentsByVehicle(
+        fixedExpenses,
+        period.from,
+        period.to,
+      ),
+    [fixedExpenses, period.from, period.to],
+  );
+
+  const vehicleProf = useMemo(
+    () =>
+      rides
+        ? buildVehicleProf(
+            rides,
+            vehicles,
+            fuelByVehicle,
+            maintenanceByVehicle,
+            fixedByVehicle,
+            windowDays,
+          )
+        : [],
+    [
+      rides,
+      vehicles,
+      fuelByVehicle,
+      maintenanceByVehicle,
+      fixedByVehicle,
+      windowDays,
+    ],
+  );
+
+  // Compute deltas (current vs comparison).
+  const myIncomeDelta = useMemo(() => {
+    if (!totals || !prevTotals) return null;
+    if (prevTotals.myEarned === 0) return null;
+    return (totals.myEarned - prevTotals.myEarned) / prevTotals.myEarned;
+  }, [totals, prevTotals]);
+  const fleetDelta = useMemo(() => {
+    if (!totals || !prevTotals) return null;
+    if (prevTotals.fleetEarned === 0) return null;
+    return (
+      (totals.fleetEarned - prevTotals.fleetEarned) / prevTotals.fleetEarned
+    );
+  }, [totals, prevTotals]);
+  const avgDelta = useMemo(() => {
+    if (!totals || !prevTotals) return null;
+    if (prevTotals.avgCompletedCents === 0) return null;
+    return (
+      (totals.avgCompletedCents - prevTotals.avgCompletedCents) /
+      prevTotals.avgCompletedCents
+    );
+  }, [totals, prevTotals]);
+
+  // Sparkline for the KPI cards: downsample the current series into ~24 buckets.
+  const sparkValues = useMemo(() => {
+    if (series.length === 0) return [];
+    const buckets = Math.min(24, series.length);
+    const arr = Array(buckets).fill(0);
+    series.forEach((p, i) => {
+      const idx = Math.floor((i / series.length) * buckets);
+      arr[idx] += p.cents;
+    });
+    return arr;
+  }, [series]);
+
+  const insights = useMemo(
+    () =>
+      buildInsights({
+        myIncomeCents: totals?.myEarned ?? 0,
+        fleetRevenueCents: totals?.fleetEarned ?? 0,
+        myIncomeDelta,
+        netProfitCents,
+        totalExpensesCents,
+        topClients,
+        agingBuckets: [], // populated below — but Insights only needs totals
+        hasCommissionConfigured: drivers.some(
+          (d) =>
+            !d.is_owner && (d.commission_rate_bps ?? 0) > 0,
+        ),
+        ownerDriverPresent: drivers.some((d) => d.is_owner === true),
+        hasAnyExpenses,
+        periodLabel: period.label,
+      }),
+    [
+      totals,
+      myIncomeDelta,
+      netProfitCents,
+      totalExpensesCents,
+      topClients,
+      drivers,
+      hasAnyExpenses,
+      period.label,
+    ],
+  );
+
+  const prevLabel =
+    compareMode === "yoy"
+      ? "Same period last year"
+      : "Previous period";
 
   return (
     <div>
-      <header className="flex items-end justify-between gap-4 flex-wrap">
-        <div className="min-w-0">
-          <div
-            className="text-muted"
-            style={{
-              fontSize: 12.5,
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-              fontWeight: 500,
-            }}
-          >
-            Earnings
-          </div>
-          <h1
-            className="mt-1 flex items-center gap-2.5"
-            style={{
-              fontSize: 28,
-              fontWeight: 600,
-              letterSpacing: "-0.02em",
-            }}
-          >
-            {period.label}
-            <span
-              key={pulse}
-              title="Live — updates as rides change"
-              aria-label="Live"
-              className="inline-block"
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 999,
-                background: "var(--success)",
-                animation: "pulse-dot 1.6s ease-out",
-              }}
-            />
-          </h1>
-          <p
-            className="text-muted mt-1"
-            style={{ fontSize: 13.5, lineHeight: 1.5 }}
-          >
-            Earned, projected, and what's still on the books — live, in
-            Los Angeles time.
-          </p>
-        </div>
-        <PeriodSwitcher value={periodId} onChange={setPeriodId} />
-      </header>
+      <EarningsPageHeader period={period} />
 
       {error ? (
-        <div className="mt-4 surface rounded-[12px] p-4 text-danger text-sm">
+        <div
+          className="mb-5 rounded-[6px] p-4"
+          style={{
+            background: "color-mix(in oklab, var(--danger) 8%, var(--surface))",
+            border: "1px solid var(--danger)",
+            color: "var(--danger)",
+            fontSize: 13,
+          }}
+        >
           {error}
         </div>
       ) : null}
 
-      <section className="mt-6 grid gap-3 md:gap-4 grid-cols-2 md:grid-cols-4">
-        <KpiCard
-          label="Earned"
-          value={rides === null ? "—" : fmtDollars(totals.earned)}
-          prefix="$"
-          hint={
-            rides === null
-              ? undefined
-              : `${totals.completedCount} ride${
-                  totals.completedCount === 1 ? "" : "s"
-                } completed`
+      {/* Date controls */}
+      <EarningsDateControls
+        periodId={periodId}
+        setPeriodId={setPeriodId}
+        compareMode={compareMode}
+        setCompareMode={setCompareMode}
+      />
+
+      {/* KPI row */}
+      <section className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <EarningsKpi
+          label="My income"
+          value={
+            totals === null ? "—" : fmtMoney(totals.myEarned)
           }
-          icon="check"
-        />
-        <KpiCard
-          label="Projected"
-          value={rides === null ? "—" : fmtDollars(totals.projected)}
-          prefix="$"
+          delta={myIncomeDelta}
+          spark={sparkValues}
+          sparkColor="var(--accent)"
           hint={
-            rides === null
+            totals === null
               ? undefined
-              : `${totals.bookedCount} ride${
-                  totals.bookedCount === 1 ? "" : "s"
-                } on the books`
+              : `${totals.completedCount} ride${totals.completedCount === 1 ? "" : "s"} completed · ${period.label}`
           }
-          icon="spark"
           accent
         />
-        <KpiCard
-          label="Remaining"
-          value={rides === null ? "—" : fmtDollars(totals.remaining)}
-          prefix="$"
-          hint={
-            rides === null
-              ? undefined
-              : `${totals.bookedCount - totals.completedCount} not yet completed`
+        <EarningsKpi
+          label={hasAnyExpenses ? "Net profit" : "Net profit · setup needed"}
+          value={
+            totals === null
+              ? "—"
+              : hasAnyExpenses
+                ? fmtMoney(netProfitCents)
+                : "—"
           }
-          icon="clock"
+          delta={hasAnyExpenses ? netProfitDelta : null}
+          sparkColor={netProfitCents >= 0 ? "var(--success)" : "var(--danger)"}
+          hint={
+            hasAnyExpenses
+              ? `${fmtMoney(totalExpensesCents)} in costs · ${totals && totals.myEarned > 0 ? Math.round((netProfitCents / totals.myEarned) * 100) : 0}% margin`
+              : "Log fixed + per-ride costs on /expenses to see profit."
+          }
         />
-        <KpiCard
+        <EarningsKpi
+          label="Fleet revenue"
+          value={totals === null ? "—" : fmtMoney(totals.fleetEarned)}
+          delta={fleetDelta}
+          sparkColor="var(--accent-strong)"
+          hint={
+            totals && totals.fleetEarned > totals.myEarned
+              ? `${fmtMoney(totals.fleetEarned - totals.myEarned)} flowed to other drivers`
+              : totals && totals.bookedCount - totals.completedCount > 0
+                ? `${fmtMoney(Math.max(0, totals.myProjected - totals.myEarned))} of yours still on the books`
+                : "Everything the fleet collected"
+          }
+        />
+        <EarningsKpi
           label="Avg / completed ride"
-          value={rides === null ? "—" : fmtDollars(totals.avgCompleted)}
-          prefix="$"
-          hint={
-            totals.completedCount === 0
-              ? "No completed rides yet in this window"
-              : undefined
+          value={
+            totals === null
+              ? "—"
+              : fmtMoney(totals.avgCompletedCents)
           }
-          icon="wallet"
+          delta={avgDelta}
+          hint={
+            totals && totals.completedCount === 0
+              ? "No completed rides yet in this window"
+              : "Owner-side income per completed ride"
+          }
+          sparkColor="var(--accent)"
         />
       </section>
 
-      <section className="mt-6 surface rounded-[12px] p-4 md:p-5">
-        <div
-          className="flex items-end justify-between gap-3 mb-2"
-          style={{ minHeight: 24 }}
-        >
-          <h2 style={{ fontSize: 15, fontWeight: 600 }}>
-            Cumulative revenue
-          </h2>
-          <div className="text-muted tnum" style={{ fontSize: 12 }}>
-            Window total:{" "}
-            <span style={{ color: "var(--text)", fontWeight: 600 }}>
-              {fmtMoney(totals.projected)}
-            </span>
-          </div>
+      {/* Big chart */}
+      <section className="mt-6">
+        <EarningsRevenueChart
+          current={series}
+          previous={prevSeries}
+          prevLabel={prevLabel}
+          emphasizeIncome
+        />
+      </section>
+
+      {/* Insights + Mix + AR */}
+      <section className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <EarningsInsights insights={insights} />
+        <div className="flex flex-col gap-6">
+          <EarningsServiceMix buckets={serviceMix} />
+          <EarningsARAging invoices={invoices} />
         </div>
-        {series.length === 0 ? (
-          <ChartEmpty />
-        ) : (
-          <CumulativeRevenueChart data={series} todayIndex={todayIndex} />
-        )}
       </section>
 
-      <section className="mt-4 surface rounded-[12px] p-4 md:p-5">
-        <h2 style={{ fontSize: 15, fontWeight: 600 }} className="mb-2">
-          Revenue by day
-        </h2>
-        {series.length === 0 ? (
-          <ChartEmpty />
-        ) : (
-          <DailyRevenueBars data={series} />
-        )}
-      </section>
-
-      <section className="mt-4 grid gap-4 md:grid-cols-2">
-        <TopList
-          title="Top clients"
-          subtitle="Booked revenue this window — completed and on-the-books."
+      {/* Top clients + forecast */}
+      <section className="mt-6 grid gap-6 lg:grid-cols-2">
+        <EarningsTopClients
           rows={topClients}
+          totalCents={totals?.fleetProjected ?? 0}
+          showEarned
         />
-        <TopList
-          title="Top drivers"
-          subtitle="Earned revenue (completed only) — useful for tip-outs."
-          rows={topDrivers}
-          completedOnly
+        <EarningsForecast
+          windowMyIncomeCents={totals?.myEarned ?? 0}
+          windowDays={windowDays}
         />
       </section>
 
-      <style>{`
-        @keyframes pulse-dot {
-          0%   { transform: scale(1);   opacity: 1; }
-          70%  { transform: scale(2.5); opacity: 0; }
-          100% { transform: scale(2.5); opacity: 0; }
-        }
-      `}</style>
-    </div>
-  );
-}
+      {/* Drivers + Vehicles */}
+      <section className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <EarningsDriverPayouts rows={driverPayouts} />
+        <EarningsVehicleProf rows={vehicleProf} />
+      </section>
 
-// ── Period switcher ───────────────────────────────────────────────
-function PeriodSwitcher({
-  value,
-  onChange,
-}: {
-  value: PeriodId;
-  onChange: (v: PeriodId) => void;
-}) {
-  const items: { id: PeriodId; label: string }[] = [
-    { id: "today", label: "Today" },
-    { id: "week", label: "Week" },
-    { id: "month", label: "Month" },
-    { id: "quarter", label: "Quarter" },
-    { id: "year", label: "Year" },
-  ];
-  return (
-    <div
-      className="surface rounded-[10px] p-1 flex"
-      style={{ background: "var(--surface-2)" }}
-    >
-      {items.map((it) => {
-        const active = it.id === value;
-        return (
-          <button
-            key={it.id}
-            onClick={() => onChange(it.id)}
-            className="inline-flex items-center justify-center h-8 px-3 rounded-[7px] text-[13px] font-medium transition"
-            style={{
-              background: active ? "var(--surface)" : "transparent",
-              color: active ? "var(--text)" : "var(--text-muted)",
-              border: active ? "1px solid var(--border)" : "1px solid transparent",
-            }}
-          >
-            {it.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// ── Top-N panels ──────────────────────────────────────────────────
-type TopRow = {
-  id: string;
-  label: string;
-  earnedCents: number;
-  projectedCents: number;
-  rideCount: number;
-};
-
-function topByGroup(
-  rides: Ride[],
-  pickId: (r: Ride) => string | null,
-  resolveLabel: (id: string) => string,
-): TopRow[] {
-  const map = new Map<string, TopRow>();
-  for (const r of rides) {
-    if (r.status === "cancelled") continue;
-    const id = pickId(r);
-    if (!id) continue;
-    const slot: TopRow =
-      map.get(id) ?? {
-        id,
-        label: resolveLabel(id),
-        earnedCents: 0,
-        projectedCents: 0,
-        rideCount: 0,
-      };
-    slot.rideCount++;
-    slot.projectedCents += r.total_cents;
-    if (r.status === "completed") slot.earnedCents += r.total_cents;
-    map.set(id, slot);
-  }
-  return Array.from(map.values())
-    .sort((a, b) => b.projectedCents - a.projectedCents)
-    .slice(0, 5);
-}
-
-function TopList({
-  title,
-  subtitle,
-  rows,
-  completedOnly,
-}: {
-  title: string;
-  subtitle: string;
-  rows: TopRow[];
-  completedOnly?: boolean;
-}) {
-  const max =
-    rows.length === 0
-      ? 0
-      : Math.max(
-          ...rows.map((r) =>
-            completedOnly ? r.earnedCents : r.projectedCents,
-          ),
-        );
-  return (
-    <div className="surface rounded-[12px]">
-      <div
-        className="px-4 pt-4 pb-2"
-        style={{ borderBottom: "1px solid var(--border)" }}
+      <p
+        className="text-muted mt-10 text-center"
+        style={{ fontSize: 12 }}
       >
-        <h2 style={{ fontSize: 15, fontWeight: 600 }}>{title}</h2>
-        <p
-          className="text-muted mt-1"
-          style={{ fontSize: 12.5, lineHeight: 1.5 }}
-        >
-          {subtitle}
-        </p>
-      </div>
-      {rows.length === 0 ? (
-        <div className="p-5 text-muted text-sm">No data in this window.</div>
-      ) : (
-        <ul>
-          {rows.map((r, i) => {
-            const value = completedOnly ? r.earnedCents : r.projectedCents;
-            const pct = max > 0 ? (value / max) * 100 : 0;
-            return (
-              <li
-                key={r.id}
-                className="px-4 py-3"
-                style={{
-                  borderTop: i === 0 ? "none" : "1px solid var(--border)",
-                }}
-              >
-                <div className="flex items-baseline justify-between gap-3">
-                  <div
-                    className="truncate"
-                    style={{ fontSize: 13.5, fontWeight: 600 }}
-                  >
-                    {r.label}
-                  </div>
-                  <div
-                    className="tnum"
-                    style={{ fontSize: 13.5, fontWeight: 600 }}
-                  >
-                    {fmtMoney(value)}
-                  </div>
-                </div>
-                <div
-                  className="mt-1.5 rounded-full overflow-hidden"
-                  style={{
-                    height: 4,
-                    background: "var(--surface-2)",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${pct}%`,
-                      height: "100%",
-                      background: completedOnly
-                        ? "var(--success)"
-                        : "var(--accent)",
-                    }}
-                  />
-                </div>
-                <div
-                  className="text-muted mt-1 tnum"
-                  style={{ fontSize: 11.5 }}
-                >
-                  {r.rideCount} ride{r.rideCount === 1 ? "" : "s"}
-                  {!completedOnly && r.earnedCents !== r.projectedCents
-                    ? ` · ${fmtMoney(r.earnedCents)} already earned`
-                    : ""}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function ChartEmpty() {
-  return (
-    <div
-      className="rounded-[10px] p-6 text-center"
-      style={{
-        background: "var(--surface-2)",
-        border: "1px dashed var(--border)",
-      }}
-    >
-      <p className="text-muted" style={{ fontSize: 13.5 }}>
-        Nothing on the books in this window yet.{" "}
-        <Link to="/rides/new" className="text-accent">
-          Add a ride
-        </Link>{" "}
-        to see it light up.
+        Numbers update live as rides change. Times in America/Los_Angeles.
       </p>
     </div>
   );

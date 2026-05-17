@@ -522,6 +522,191 @@ export const TOOL_SCHEMAS = [
       },
     },
   },
+  {
+    name: "log_fixed_expense",
+    description: [
+      "Record a recurring company expense (insurance, lease, phone,",
+      "software, rent, subscription). Allocates per-day to whatever",
+      "window the Earnings dashboard looks at, based on cadence.",
+      "",
+      "Use this for amounts that arrive on a schedule. For one-time",
+      "vehicle service, use `log_maintenance`. For per-ride variable",
+      "costs, use `log_ride_cost`.",
+      "",
+      "Money is in dollars: `amount_dollars: 300.00` not cents.",
+      "Cadence enum: 'weekly' | 'monthly' | 'annual' (default 'monthly').",
+      "Category enum: 'insurance' | 'lease' | 'phone' | 'software' |",
+      "  'rent' | 'subscription' | 'other'.",
+      "",
+      "Response: { expense_id, expense, warnings }.",
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          enum: [
+            "insurance", "lease", "phone", "software",
+            "rent", "subscription", "other",
+          ],
+        },
+        label: {
+          type: "string",
+          description: "Short label, e.g. 'GEICO Commercial Auto'.",
+        },
+        amount_dollars: {
+          type: "number",
+          description: "USD amount per cadence period. Must be > 0.",
+        },
+        cadence: {
+          type: "string",
+          enum: ["weekly", "monthly", "annual"],
+        },
+        effective_from: {
+          type: "string",
+          description: "YYYY-MM-DD. Defaults to today.",
+        },
+        effective_to: {
+          type: "string",
+          description: "YYYY-MM-DD when this stops applying. Null = ongoing.",
+        },
+        notes: { type: "string" },
+      },
+      required: ["category", "label", "amount_dollars"],
+    },
+  },
+  {
+    name: "log_maintenance",
+    description: [
+      "Record a one-time vehicle service (oil change, tires, brakes,",
+      "detailing, registration, smog, repair, other).",
+      "",
+      "Set `service_interval_days` to amortize the cost evenly across",
+      "the interval it covers (e.g. $90 oil change with 90-day interval",
+      "= $1/day allocated to whatever window the dashboard looks at).",
+      "Omit the interval to count the full amount once on the service",
+      "date.",
+      "",
+      "Money is in dollars. Vehicle is fuzzy-matched by `vehicle_name`",
+      "or pass `vehicle_id` directly. Ambiguous matches return 400 with",
+      "the candidate list.",
+      "",
+      "Response: { maintenance_id, record, warnings }.",
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        vehicle_name: { type: "string" },
+        vehicle_id: { type: "string" },
+        category: {
+          type: "string",
+          enum: [
+            "oil", "tires", "brakes", "detailing",
+            "registration", "smog", "repair", "other",
+          ],
+        },
+        label: { type: "string" },
+        amount_dollars: { type: "number" },
+        serviced_at: {
+          type: "string",
+          description: "YYYY-MM-DD. Defaults to today.",
+        },
+        odometer_at_service: { type: "number" },
+        service_interval_days: {
+          type: "number",
+          description:
+            "If set, the cost amortizes over this many days. Leave null for a one-time charge.",
+        },
+        notes: { type: "string" },
+      },
+      required: ["category", "label", "amount_dollars"],
+    },
+  },
+  {
+    name: "log_ride_cost",
+    description: [
+      "Record a per-ride variable cost (gas, tolls, parking, amenities,",
+      "tip-out, other). Use this either to set an UPFRONT ESTIMATE",
+      "before the trip, or to RECORD THE ACTUAL spend after.",
+      "",
+      "Pass `estimated_dollars` alone to estimate. Pass `actual_dollars`",
+      "to confirm the actual amount (also stamps `confirmed_at`).",
+      "Passing both creates a row with both filled in.",
+      "",
+      "Category enum: 'gas' | 'tolls' | 'parking' | 'amenities' |",
+      "  'tip_out' | 'other'.",
+      "",
+      "Response: { ride_cost_id, ride_cost, warnings }.",
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        ride_id: { type: "string" },
+        category: {
+          type: "string",
+          enum: ["gas", "tolls", "parking", "amenities", "tip_out", "other"],
+        },
+        estimated_dollars: { type: "number" },
+        actual_dollars: { type: "number" },
+        note: { type: "string" },
+      },
+      required: ["ride_id", "category"],
+    },
+  },
+  {
+    name: "list_invoices",
+    description: [
+      "List invoices. Capped at 50 per call (paginated via `cursor`).",
+      "",
+      "Filter by `status` ('open' = sent or overdue; or any of",
+      "'sent' | 'paid' | 'overdue' | 'void' | 'draft' | 'all').",
+      "Filter by `client_id` for a single client's history.",
+      "",
+      "Each row carries: id, number, amount_dollars, status,",
+      "effective_status (auto-overdue when due_date passed), terms,",
+      "due_date, paid_at, ride_id, days_open, days_late, client name",
+      "where available.",
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: [
+            "open", "sent", "paid", "overdue", "void", "draft", "all",
+          ],
+        },
+        client_id: { type: "string" },
+        cursor: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "mark_invoice_paid",
+    description: [
+      "Mark an invoice paid. Sets status='paid' and stamps paid_at.",
+      "",
+      "Identify the invoice by `invoice_id` (uuid), `invoice_number`",
+      "(human-readable, e.g. 'SDL-1042'), or by `ride_id` (most",
+      "recent invoice on the ride). Refuses to re-pay an already-paid",
+      "invoice unless `force: true`.",
+      "",
+      "Response: { invoice_id, before, after, warnings }.",
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        invoice_id: { type: "string" },
+        invoice_number: { type: "string" },
+        ride_id: { type: "string" },
+        paid_at: {
+          type: "string",
+          description: "ISO datetime. Defaults to now.",
+        },
+        force: { type: "boolean" },
+      },
+    },
+  },
 ] as const;
 
 type ToolName = (typeof TOOL_SCHEMAS)[number]["name"];
@@ -565,6 +750,16 @@ export async function executeTool(
         return ok(await listVehiclesTool(args, env));
       case "log_activity":
         return ok(await logActivity(args, env, ctx));
+      case "log_fixed_expense":
+        return ok(await logFixedExpense(args, env, ctx));
+      case "log_maintenance":
+        return ok(await logMaintenance(args, env, ctx));
+      case "log_ride_cost":
+        return ok(await logRideCost(args, env, ctx));
+      case "list_invoices":
+        return ok(await listInvoicesTool(args, env));
+      case "mark_invoice_paid":
+        return ok(await markInvoicePaidTool(args, env, ctx));
       default:
         return err(404, `Unknown tool: ${name}`);
     }
@@ -1978,4 +2173,461 @@ function buildDriverHumanMessage(
   }
   const name = String(current.full_name ?? "driver");
   return summarizeChanges(`Driver ${name}`, changes);
+}
+
+// ── log_fixed_expense ──────────────────────────────────────────────
+async function logFixedExpense(
+  args: Record<string, unknown>,
+  env: Env,
+  ctx: ToolContext,
+) {
+  const sb = adminClient(env);
+  const category = s(args.category);
+  const label = s(args.label);
+  const cents = dollarsToCents(args.amount_dollars);
+  const cadence = s(args.cadence) ?? "monthly";
+  const effectiveFrom = s(args.effective_from) ?? todayLocalDate();
+  const effectiveTo = s(args.effective_to) ?? null;
+  const notes = s(args.notes) ?? null;
+
+  if (!category) throw new ToolError(400, "category is required.");
+  if (!label) throw new ToolError(400, "label is required.");
+  if (!Number.isFinite(cents) || cents <= 0) {
+    throw new ToolError(400, "amount_dollars must be a positive number.");
+  }
+  if (!["weekly", "monthly", "annual"].includes(cadence)) {
+    throw new ToolError(400, `Invalid cadence: ${cadence}`);
+  }
+  if (
+    ![
+      "insurance", "lease", "phone", "software",
+      "rent", "subscription", "other",
+    ].includes(category)
+  ) {
+    throw new ToolError(400, `Invalid category: ${category}`);
+  }
+
+  const { data, error } = await sb
+    .from("expenses_fixed")
+    .insert({
+      category,
+      label,
+      amount_cents: cents,
+      cadence,
+      effective_from: effectiveFrom,
+      effective_to: effectiveTo,
+      notes,
+    })
+    .select()
+    .single();
+  if (error) throw new ToolError(500, error.message);
+
+  await sb.from("events").insert({
+    source: ctx.actor,
+    message: `Fixed expense added · ${label} · $${(cents / 100).toFixed(2)} ${cadence}`,
+    metadata: { expense_id: data.id, category, cadence },
+  });
+
+  return { expense_id: data.id, expense: data, warnings: [] };
+}
+
+// ── log_maintenance ────────────────────────────────────────────────
+async function logMaintenance(
+  args: Record<string, unknown>,
+  env: Env,
+  ctx: ToolContext,
+) {
+  const sb = adminClient(env);
+  const category = s(args.category);
+  const label = s(args.label);
+  const cents = dollarsToCents(args.amount_dollars);
+  const servicedAt = s(args.serviced_at) ?? todayLocalDate();
+  const notes = s(args.notes) ?? null;
+  const odometer =
+    typeof args.odometer_at_service === "number"
+      ? Math.round(args.odometer_at_service)
+      : null;
+  const intervalDays =
+    typeof args.service_interval_days === "number"
+      ? Math.round(args.service_interval_days)
+      : null;
+
+  if (!category) throw new ToolError(400, "category is required.");
+  if (!label) throw new ToolError(400, "label is required.");
+  if (!Number.isFinite(cents) || cents <= 0) {
+    throw new ToolError(400, "amount_dollars must be a positive number.");
+  }
+  if (
+    ![
+      "oil", "tires", "brakes", "detailing",
+      "registration", "smog", "repair", "other",
+    ].includes(category)
+  ) {
+    throw new ToolError(400, `Invalid category: ${category}`);
+  }
+  if (intervalDays !== null && intervalDays <= 0) {
+    throw new ToolError(
+      400,
+      "service_interval_days must be > 0 when set.",
+    );
+  }
+
+  let vehicleId = s(args.vehicle_id) ?? null;
+  if (!vehicleId) {
+    const vehicleName = s(args.vehicle_name);
+    if (!vehicleName) {
+      throw new ToolError(400, "vehicle_id or vehicle_name is required.");
+    }
+    const lookup = await findVehicles(env, vehicleName);
+    if (!lookup.match && lookup.candidates.length === 0) {
+      throw new ToolError(404, `No vehicle matched "${vehicleName}".`);
+    }
+    if (!lookup.match && lookup.candidates.length > 1) {
+      throw new ToolError(400, "Ambiguous vehicle match.", {
+        candidates: lookup.candidates.map((v) => ({
+          id: v.id,
+          display_name: v.display_name,
+        })),
+      });
+    }
+    vehicleId = lookup.match!.id;
+  }
+
+  const { data, error } = await sb
+    .from("vehicle_maintenance")
+    .insert({
+      vehicle_id: vehicleId,
+      category,
+      label,
+      amount_cents: cents,
+      serviced_at: servicedAt,
+      odometer_at_service: odometer,
+      service_interval_days: intervalDays,
+      notes,
+    })
+    .select()
+    .single();
+  if (error) throw new ToolError(500, error.message);
+
+  await sb.from("events").insert({
+    source: ctx.actor,
+    message: `Maintenance logged · ${label} · $${(cents / 100).toFixed(2)}`,
+    metadata: {
+      maintenance_id: data.id,
+      vehicle_id: vehicleId,
+      category,
+    },
+  });
+
+  return { maintenance_id: data.id, record: data, warnings: [] };
+}
+
+// ── log_ride_cost ──────────────────────────────────────────────────
+async function logRideCost(
+  args: Record<string, unknown>,
+  env: Env,
+  ctx: ToolContext,
+) {
+  const sb = adminClient(env);
+  const rideId = s(args.ride_id);
+  const category = s(args.category);
+  if (!rideId) throw new ToolError(400, "ride_id is required.");
+  if (!category) throw new ToolError(400, "category is required.");
+  if (
+    !["gas", "tolls", "parking", "amenities", "tip_out", "other"].includes(
+      category,
+    )
+  ) {
+    throw new ToolError(400, `Invalid category: ${category}`);
+  }
+
+  const hasEstimated = args.estimated_dollars !== undefined;
+  const hasActual = args.actual_dollars !== undefined;
+  if (!hasEstimated && !hasActual) {
+    throw new ToolError(
+      400,
+      "Provide estimated_dollars, actual_dollars, or both.",
+    );
+  }
+  const estCents = hasEstimated
+    ? dollarsToCents(args.estimated_dollars)
+    : 0;
+  const actCents = hasActual ? dollarsToCents(args.actual_dollars) : null;
+  if (estCents < 0 || (actCents !== null && actCents < 0)) {
+    throw new ToolError(400, "Costs cannot be negative.");
+  }
+
+  // Make sure the ride exists — gives a clean 404 instead of a generic
+  // FK violation message.
+  const { data: ride, error: rideErr } = await sb
+    .from("rides")
+    .select("id, passenger_name")
+    .eq("id", rideId)
+    .maybeSingle();
+  if (rideErr) throw new ToolError(500, rideErr.message);
+  if (!ride) throw new ToolError(404, `Ride ${rideId} not found.`);
+
+  const { data, error } = await sb
+    .from("ride_costs")
+    .insert({
+      ride_id: rideId,
+      category,
+      estimated_cents: estCents,
+      actual_cents: actCents,
+      confirmed_at: actCents !== null ? new Date().toISOString() : null,
+      note: s(args.note) ?? null,
+    })
+    .select()
+    .single();
+  if (error) throw new ToolError(500, error.message);
+
+  const dollarsLabel =
+    actCents !== null
+      ? `actual $${(actCents / 100).toFixed(2)}`
+      : `est. $${(estCents / 100).toFixed(2)}`;
+  await sb.from("events").insert({
+    source: ctx.actor,
+    ride_id: rideId,
+    message: `Ride cost · ${category} · ${dollarsLabel}`,
+    metadata: { ride_cost_id: data.id, category },
+  });
+
+  return { ride_cost_id: data.id, ride_cost: data, warnings: [] };
+}
+
+// ── list_invoices ──────────────────────────────────────────────────
+async function listInvoicesTool(
+  args: Record<string, unknown>,
+  env: Env,
+) {
+  const sb = adminClient(env);
+  const filter = s(args.status) ?? "open";
+  const clientId = s(args.client_id);
+  const cursor = s(args.cursor);
+  const today = todayLocalDate();
+
+  let q = sb
+    .from("invoices")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(MAX_PAGE + 1);
+  if (cursor) q = q.lt("created_at", cursor);
+
+  const { data: rows, error } = await q;
+  if (error) throw new ToolError(500, error.message);
+
+  // Pull rides + clients to enrich for the response (one bulk query each).
+  const rideIds = Array.from(
+    new Set((rows ?? []).map((r) => r.ride_id).filter((x) => x)),
+  );
+  let rideMap = new Map<
+    string,
+    { id: string; client_id: string | null; passenger_name: string; pickup_at: string }
+  >();
+  if (rideIds.length > 0) {
+    const { data: rs, error: rErr } = await sb
+      .from("rides")
+      .select("id, client_id, passenger_name, pickup_at")
+      .in("id", rideIds);
+    if (rErr) throw new ToolError(500, rErr.message);
+    rideMap = new Map((rs ?? []).map((r) => [r.id, r]));
+  }
+  const clientIds = Array.from(
+    new Set(
+      Array.from(rideMap.values())
+        .map((r) => r.client_id)
+        .filter((x): x is string => !!x),
+    ),
+  );
+  let clientMap = new Map<
+    string,
+    { id: string; name: string; company: string | null }
+  >();
+  if (clientIds.length > 0) {
+    const { data: cs, error: cErr } = await sb
+      .from("clients")
+      .select("id, name, company")
+      .in("id", clientIds);
+    if (cErr) throw new ToolError(500, cErr.message);
+    clientMap = new Map((cs ?? []).map((c) => [c.id, c]));
+  }
+
+  type Enriched = {
+    id: string;
+    number: string | null;
+    amount_dollars: number;
+    status: string;
+    effective_status: string;
+    terms: string | null;
+    due_date: string | null;
+    paid_at: string | null;
+    ride_id: string | null;
+    days_open: number;
+    days_late: number;
+    client_id: string | null;
+    client_name: string | null;
+    client_company: string | null;
+    passenger_name: string | null;
+    pickup_at: string | null;
+    created_at: string;
+  };
+  const enriched: Enriched[] = (rows ?? []).map((inv) => {
+    const ride = inv.ride_id ? rideMap.get(inv.ride_id) : null;
+    const client =
+      ride?.client_id ? clientMap.get(ride.client_id) ?? null : null;
+    const overdue =
+      inv.status === "sent" && inv.due_date && inv.due_date < today;
+    const daysOpen = Math.max(
+      0,
+      Math.round(
+        (Date.now() - new Date(inv.created_at).getTime()) / 86_400_000,
+      ),
+    );
+    const daysLate =
+      inv.due_date && inv.due_date < today
+        ? Math.round(
+            (Date.now() -
+              new Date(inv.due_date + "T23:59:59Z").getTime()) /
+              86_400_000,
+          )
+        : 0;
+    return {
+      id: inv.id,
+      number: inv.number,
+      amount_dollars: inv.amount_cents / 100,
+      status: inv.status,
+      effective_status: overdue ? "overdue" : inv.status,
+      terms: inv.terms,
+      due_date: inv.due_date,
+      paid_at: inv.paid_at,
+      ride_id: inv.ride_id,
+      days_open: daysOpen,
+      days_late: daysLate,
+      client_id: ride?.client_id ?? null,
+      client_name: client?.name ?? null,
+      client_company: client?.company ?? null,
+      passenger_name: ride?.passenger_name ?? null,
+      pickup_at: ride?.pickup_at ?? null,
+      created_at: inv.created_at,
+    };
+  });
+
+  // Apply filters in-memory (the table is small enough; cleaner than
+  // synthesizing the filter at the SQL layer for "open" which spans
+  // two statuses + due-date).
+  let filtered = enriched;
+  if (clientId) {
+    filtered = filtered.filter((e) => e.client_id === clientId);
+  }
+  if (filter === "open") {
+    filtered = filtered.filter(
+      (e) =>
+        e.effective_status === "sent" || e.effective_status === "overdue",
+    );
+  } else if (filter !== "all") {
+    filtered = filtered.filter((e) => e.effective_status === filter);
+  }
+
+  const hasMore = filtered.length > MAX_PAGE;
+  const page = filtered.slice(0, MAX_PAGE);
+  const nextCursor = hasMore ? page[page.length - 1].created_at : null;
+  const totalDollars = page.reduce((s, e) => s + e.amount_dollars, 0);
+
+  return {
+    invoices: page,
+    count: page.length,
+    total_dollars: Math.round(totalDollars * 100) / 100,
+    has_more: hasMore,
+    next_cursor: nextCursor,
+  };
+}
+
+// ── mark_invoice_paid ──────────────────────────────────────────────
+async function markInvoicePaidTool(
+  args: Record<string, unknown>,
+  env: Env,
+  ctx: ToolContext,
+) {
+  const sb = adminClient(env);
+  const invoiceId = s(args.invoice_id);
+  const invoiceNumber = s(args.invoice_number);
+  const rideId = s(args.ride_id);
+  const force = args.force === true;
+  const paidAt = s(args.paid_at) ?? new Date().toISOString();
+
+  if (!invoiceId && !invoiceNumber && !rideId) {
+    throw new ToolError(
+      400,
+      "Provide invoice_id, invoice_number, or ride_id.",
+    );
+  }
+
+  // Resolve to a single invoice row.
+  let q = sb.from("invoices").select("*").limit(2);
+  if (invoiceId) q = q.eq("id", invoiceId);
+  else if (invoiceNumber) q = q.eq("number", invoiceNumber);
+  else if (rideId) {
+    q = q.eq("ride_id", rideId).order("created_at", { ascending: false });
+  }
+  const { data: rows, error: fetchErr } = await q;
+  if (fetchErr) throw new ToolError(500, fetchErr.message);
+  if (!rows || rows.length === 0) {
+    throw new ToolError(404, "Invoice not found.");
+  }
+  if (rows.length > 1 && !invoiceId && !invoiceNumber) {
+    throw new ToolError(409, "Multiple invoices match — pass invoice_id.", {
+      candidates: rows.map((r) => ({
+        id: r.id,
+        number: r.number,
+        status: r.status,
+        amount_cents: r.amount_cents,
+      })),
+    });
+  }
+  // Deep-copy so the `before` snapshot doesn't get mutated when the
+  // update lands. Real Postgres returns distinct objects; some test
+  // fakes (and even some PostgREST quirks) share references.
+  const before = { ...rows[0] };
+
+  if (before.status === "paid" && !force) {
+    throw new ToolError(409, "Invoice is already paid. Pass force=true to override.", {
+      paid_at: before.paid_at,
+    });
+  }
+  if (before.status === "void" && !force) {
+    throw new ToolError(409, "Invoice is voided. Pass force=true to override.");
+  }
+
+  const { data: after, error } = await sb
+    .from("invoices")
+    .update({ status: "paid", paid_at: paidAt })
+    .eq("id", before.id)
+    .select()
+    .single();
+  if (error) throw new ToolError(500, error.message);
+
+  await sb.from("events").insert({
+    source: ctx.actor,
+    ride_id: before.ride_id ?? null,
+    message: `Invoice ${before.number ?? before.id.slice(0, 8)} marked paid · $${(before.amount_cents / 100).toFixed(2)}`,
+    metadata: {
+      invoice_id: before.id,
+      invoice_number: before.number,
+    },
+  });
+
+  return {
+    invoice_id: before.id,
+    before,
+    after,
+    warnings: force && before.status === "paid"
+      ? ["Was already paid; forcibly re-stamped."]
+      : [],
+  };
+}
+
+// Helper: today as YYYY-MM-DD in business timezone.
+function todayLocalDate(): string {
+  return new Date()
+    .toLocaleDateString("en-CA", { timeZone: BUSINESS_TZ });
 }
