@@ -3,6 +3,7 @@
 // the oldest open invoices. Empty state explains how to populate it
 // (create invoices from completed rides).
 
+import { Link } from "react-router-dom";
 import { fmtMoney } from "../../lib/format";
 import { Icon } from "../Icon";
 import type { Invoice } from "../../lib/types";
@@ -128,6 +129,13 @@ export function EarningsARAging({
             Outstanding aging
           </h3>
         </div>
+        <Link
+          to="/invoices"
+          className="text-accent"
+          style={{ fontSize: 12.5, fontWeight: 500 }}
+        >
+          Open invoices →
+        </Link>
       </div>
 
       {!hasData ? (
@@ -227,10 +235,14 @@ export function EarningsARAging({
               </p>
               <div className="flex flex-col">
                 {oldest.map((inv) => (
-                  <div
+                  <Link
                     key={inv.id}
-                    className="flex items-center gap-3 py-3"
-                    style={{ borderTop: "1px solid var(--border)" }}
+                    to={inv.ride_id ? `/rides/${inv.ride_id}?tab=invoice` : "/invoices"}
+                    className="flex items-center gap-3 py-3 transition"
+                    style={{
+                      borderTop: "1px solid var(--border)",
+                      color: "var(--text)",
+                    }}
                   >
                     <div
                       className="tnum text-muted shrink-0"
@@ -270,7 +282,7 @@ export function EarningsARAging({
                     >
                       {fmtMoney(inv.amount_cents)}
                     </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             </>

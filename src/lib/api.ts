@@ -533,6 +533,22 @@ export async function listInvoices(): Promise<import("./types").Invoice[]> {
   return (data ?? []) as import("./types").Invoice[];
 }
 
+// Single ride's invoice (if one exists). Returns null when the ride
+// hasn't been invoiced yet.
+export async function getInvoiceForRide(
+  rideId: string,
+): Promise<import("./types").Invoice | null> {
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("*")
+    .eq("ride_id", rideId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as import("./types").Invoice | null) ?? null;
+}
+
 export async function nextInvoiceNumber(): Promise<string> {
   const { data, error } = await supabase.rpc("next_invoice_number");
   if (error) throw error;
@@ -581,6 +597,21 @@ export async function markInvoicePaid(id: string): Promise<void> {
     status: "paid",
     paid_at: new Date().toISOString(),
   });
+}
+
+export async function markInvoiceVoid(id: string): Promise<void> {
+  await updateInvoice(id, {
+    status: "void",
+    paid_at: null,
+  });
+}
+
+export async function markInvoiceOverdue(id: string): Promise<void> {
+  await updateInvoice(id, { status: "overdue" });
+}
+
+export async function markInvoiceSent(id: string): Promise<void> {
+  await updateInvoice(id, { status: "sent" });
 }
 
 export async function deleteInvoice(id: string): Promise<void> {

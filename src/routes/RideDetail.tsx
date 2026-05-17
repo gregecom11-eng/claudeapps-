@@ -16,6 +16,7 @@ import { Avatar } from "../components/Avatar";
 import { Icon, type IconName } from "../components/Icon";
 import { useConfirm, useToast } from "../components/Notify";
 import { RideCostsCard } from "../components/RideCostsCard";
+import { RideInvoiceCard } from "../components/RideInvoiceCard";
 import { StatusBadge } from "../components/StatusBadge";
 import type {
   RideExtra,
@@ -264,7 +265,7 @@ export function RideDetail() {
             ))}
           </div>
 
-          <div className="pt-5">
+          <div className="pt-5 space-y-4">
             {tab === "overview" ? (
               <Overview
                 ride={ride}
@@ -275,17 +276,22 @@ export function RideDetail() {
                 onExtrasChanged={reloadExtras}
               />
             ) : (
-              <AIOrTemplateCard
-                kind={tab}
-                title={tabTitle(tab)}
-                subtitle={tabSubtitle(tab, ride)}
-                ride={ride}
-                driver={driver}
-                vehicle={vehicle}
-                client={client}
-                extras={extras}
-                fallback={packets[tab]}
-              />
+              <>
+                {tab === "invoice" ? (
+                  <RideInvoiceCard ride={ride} client={client} />
+                ) : null}
+                <AIOrTemplateCard
+                  kind={tab}
+                  title={tabTitle(tab)}
+                  subtitle={tabSubtitle(tab, ride)}
+                  ride={ride}
+                  driver={driver}
+                  vehicle={vehicle}
+                  client={client}
+                  extras={extras}
+                  fallback={packets[tab]}
+                />
+              </>
             )}
           </div>
         </div>

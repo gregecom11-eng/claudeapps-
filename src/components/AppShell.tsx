@@ -35,6 +35,7 @@ const MORE_LINKS: Tab[] = [
   { to: "/clients", label: "Clients", icon: "clients" },
   { to: "/drivers", label: "Drivers", icon: "drivers" },
   { to: "/expenses", label: "Expenses", icon: "invoice" },
+  { to: "/invoices", label: "Invoices", icon: "wallet" },
   { to: "/settings", label: "Settings", icon: "settings" },
 ];
 

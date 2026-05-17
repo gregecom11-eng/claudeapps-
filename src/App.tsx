@@ -37,6 +37,9 @@ const Earnings = lazy(() =>
 const Expenses = lazy(() =>
   import("./routes/Expenses").then((m) => ({ default: m.Expenses })),
 );
+const Invoices = lazy(() =>
+  import("./routes/Invoices").then((m) => ({ default: m.Invoices })),
+);
 const Install = lazy(() =>
   import("./routes/Install").then((m) => ({ default: m.Install })),
 );
@@ -184,7 +187,7 @@ function Gate() {
           <Route path="drivers" element={<Drivers />} />
           <Route path="earnings" element={<Earnings />} />
           <Route path="expenses" element={<Expenses />} />
-          <Route path="invoices" element={<Navigate to="/earnings" replace />} />
+          <Route path="invoices" element={<Invoices />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
