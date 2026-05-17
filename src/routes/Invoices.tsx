@@ -200,6 +200,56 @@ export function Invoices() {
     );
   }, [filtered]);
 
+  const [bulkCopied, setBulkCopied] = useState(false);
+  const copyBulkReminders = async () => {
+    const reminders = filtered.filter(
+      (r) =>
+        r.effectiveStatus === "sent" || r.effectiveStatus === "overdue",
+    );
+    if (reminders.length === 0) return;
+    const dollars = (cents: number) =>
+      `$${(cents / 100).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
+    const text = reminders
+      .map((inv) => {
+        const greeting = inv.client?.name
+          ? `Hi ${inv.client.name.split(" ")[0]},`
+          : "Hi there,";
+        const dateLine = inv.ride
+          ? new Date(inv.ride.pickup_at).toLocaleDateString("en-US", {
+              timeZone: "America/Los_Angeles",
+              month: "long",
+              day: "numeric",
+              year: "numeric",
+            })
+          : "your recent ride";
+        const due = inv.due_date ? `Due ${inv.due_date}.` : "";
+        return [
+          `─── Invoice #${inv.number ?? inv.id.slice(0, 8)} · ${inv.client?.company ?? inv.client?.name ?? "Client"} ───`,
+          greeting,
+          "",
+          `Quick reminder on invoice #${inv.number ?? inv.id.slice(0, 8)} — ${dollars(inv.amount_cents)} for the ride on ${dateLine}.`,
+          due,
+          "",
+          "Let me know if it's already on the way — happy to confirm receipt.",
+          "",
+          "Thanks!",
+        ]
+          .filter((l) => l !== null)
+          .join("\n");
+      })
+      .join("\n\n");
+    try {
+      await navigator.clipboard?.writeText(text);
+      setBulkCopied(true);
+      setTimeout(() => setBulkCopied(false), 2000);
+    } catch {
+      setError("Clipboard unavailable.");
+    }
+  };
+
   const setStatus = async (
     inv: Enriched,
     action: (id: string) => Promise<void>,
@@ -316,6 +366,22 @@ export function Invoices() {
           })}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            className="btn btn-ghost"
+            style={{ height: 32, fontSize: 12 }}
+            disabled={
+              !filtered.some(
+                (r) =>
+                  r.effectiveStatus === "sent" ||
+                  r.effectiveStatus === "overdue",
+              )
+            }
+            onClick={copyBulkReminders}
+            title="Copy reminder snippets for every open invoice in the current filter"
+          >
+            <Icon name="copy" size={12} />
+            {bulkCopied ? "Copied!" : "Copy reminders"}
+          </button>
           <input
             className="field"
             style={{ height: 32, fontSize: 13, width: 200 }}

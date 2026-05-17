@@ -15,13 +15,17 @@ import { Link } from "react-router-dom";
 import {
   deleteFixedExpense,
   deleteMaintenance,
+  EMPTY_RIDE_COST_DEFAULTS,
+  getOrgSettings,
   listAllVehicles,
   listFixedExpenses,
   listMaintenance,
   listRideCostsForRides,
   listRides,
+  updateOrgSettings,
   upsertFixedExpense,
   upsertMaintenance,
+  type RideCostDefaults,
 } from "../lib/api";
 import { fmtMoney } from "../lib/format";
 import {
@@ -657,15 +661,213 @@ function FixedTable({
   );
 }
 
+// ── Per-ride defaults card ──────────────────────────────────────
+//
+// 3 trip types × 4 categories editor. Trigger
+// apply_ride_cost_defaults reads these and seeds ride_costs rows on
+// each new ride.
+const TRIP_TYPES: { id: keyof RideCostDefaults; label: string }[] = [
+  { id: "airport", label: "Airport" },
+  { id: "p2p", label: "Point to point" },
+  { id: "hourly", label: "Hourly" },
+];
+const COST_CATS: { id: keyof RideCostDefaults["airport"]; label: string }[] = [
+  { id: "gas", label: "Gas" },
+  { id: "tolls", label: "Tolls" },
+  { id: "parking", label: "Parking" },
+  { id: "amenities", label: "Amenities" },
+];
+
+function RideCostDefaultsCard({
+  defaults,
+  onChange,
+}: {
+  defaults: RideCostDefaults;
+  onChange: (next: RideCostDefaults) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<RideCostDefaults>(defaults);
+
+  // Pull props into local edit state when defaults change externally
+  // (e.g. another tab updated them).
+  useEffect(() => {
+    setDraft(defaults);
+  }, [defaults]);
+
+  const dirty = JSON.stringify(draft) !== JSON.stringify(defaults);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await updateOrgSettings({ ride_cost_defaults: draft });
+      onChange(draft);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't save.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="rounded-[6px] p-5 md:p-6 mb-6"
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+      }}
+    >
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p className="eyebrow" style={{ letterSpacing: "0.22em" }}>
+            Per-ride templates
+          </p>
+          <h3
+            className="serif mt-1"
+            style={{
+              fontSize: 22,
+              letterSpacing: "-0.005em",
+              lineHeight: 1.1,
+            }}
+          >
+            Default cost estimates
+          </h3>
+          <p className="text-muted mt-1.5" style={{ fontSize: 12.5 }}>
+            When a ride is created, the trigger seeds these amounts as
+            estimated lines. Owner or driver overrides them with the
+            actual after the trip.
+          </p>
+        </div>
+        {dirty ? (
+          <div className="flex items-center gap-2">
+            <button
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={save}
+            >
+              {busy ? "Saving…" : "Save defaults"}
+            </button>
+            <button
+              className="btn btn-ghost"
+              disabled={busy}
+              onClick={() => setDraft(defaults)}
+            >
+              Reset
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mt-5 overflow-x-auto">
+        <table className="w-full" style={{ fontSize: 13 }}>
+          <thead>
+            <tr
+              className="text-left"
+              style={{
+                fontSize: 10.5,
+                letterSpacing: "0.18em",
+                textTransform: "uppercase",
+                color: "var(--text-muted)",
+              }}
+            >
+              <th className="pb-3 pr-4">Trip type</th>
+              {COST_CATS.map((c) => (
+                <th
+                  key={c.id}
+                  className="pb-3 pr-3 text-right"
+                  style={{ minWidth: 96 }}
+                >
+                  {c.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {TRIP_TYPES.map((t) => (
+              <tr
+                key={t.id}
+                style={{ borderTop: "1px solid var(--border)" }}
+              >
+                <td className="py-3 pr-4" style={{ fontWeight: 500 }}>
+                  {t.label}
+                </td>
+                {COST_CATS.map((c) => {
+                  const cents = draft[t.id][c.id] ?? 0;
+                  return (
+                    <td key={c.id} className="py-2 pr-3 text-right">
+                      <div className="inline-flex items-center justify-end gap-1">
+                        <span
+                          className="text-muted tnum"
+                          style={{ fontSize: 11 }}
+                        >
+                          $
+                        </span>
+                        <input
+                          className="field tnum"
+                          inputMode="decimal"
+                          style={{
+                            height: 32,
+                            width: 82,
+                            fontSize: 13,
+                            textAlign: "right",
+                            padding: "0 8px",
+                          }}
+                          value={
+                            cents > 0 ? (cents / 100).toFixed(2) : ""
+                          }
+                          placeholder="0.00"
+                          onChange={(e) => {
+                            const v = parseFloat(
+                              e.target.value.replace(/[^0-9.]/g, ""),
+                            );
+                            const newCents = Number.isFinite(v)
+                              ? Math.round(v * 100)
+                              : 0;
+                            setDraft((prev) => ({
+                              ...prev,
+                              [t.id]: {
+                                ...prev[t.id],
+                                [c.id]: newCents,
+                              },
+                            }));
+                          }}
+                        />
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {error ? (
+        <p
+          className="text-danger mt-3"
+          style={{ fontSize: 12.5 }}
+        >
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 // ── Per-ride tab ────────────────────────────────────────────────
 function PerRideTab({
   rides,
   costs,
   loading,
+  defaults,
+  onDefaultsChange,
 }: {
   rides: Ride[];
   costs: RideCost[];
   loading: boolean;
+  defaults: RideCostDefaults;
+  onDefaultsChange: (next: RideCostDefaults) => void;
 }) {
   // Group costs by ride, then summarise per category.
   const byCategory = useMemo(() => {
@@ -710,6 +912,11 @@ function PerRideTab({
 
   return (
     <div>
+      <RideCostDefaultsCard
+        defaults={defaults}
+        onChange={onDefaultsChange}
+      />
+
       <div className="grid gap-4 md:grid-cols-3 mb-6">
         <div
           className="rounded-[6px] p-5"
@@ -1398,20 +1605,25 @@ export function Expenses() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [rides, setRides] = useState<Ride[]>([]);
   const [rideCosts, setRideCosts] = useState<RideCost[]>([]);
+  const [defaults, setDefaults] = useState<RideCostDefaults>(
+    EMPTY_RIDE_COST_DEFAULTS,
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
       setError(null);
-      const [fx, mt, vs] = await Promise.all([
+      const [fx, mt, vs, settings] = await Promise.all([
         listFixedExpenses(),
         listMaintenance(),
         listAllVehicles(),
+        getOrgSettings().catch(() => null),
       ]);
       setFixed(fx);
       setMaintenance(mt);
       setVehicles(vs);
+      if (settings) setDefaults(settings.ride_cost_defaults);
 
       // For the per-ride tab: rides + their cost rows for the trailing 90 days.
       const to = new Date();
@@ -1459,7 +1671,13 @@ export function Expenses() {
         <FixedTab expenses={fixed} vehicles={vehicles} onReload={load} />
       ) : null}
       {tab === "perride" ? (
-        <PerRideTab rides={rides} costs={rideCosts} loading={loading} />
+        <PerRideTab
+          rides={rides}
+          costs={rideCosts}
+          loading={loading}
+          defaults={defaults}
+          onDefaultsChange={setDefaults}
+        />
       ) : null}
       {tab === "maintenance" ? (
         <MaintenanceTab

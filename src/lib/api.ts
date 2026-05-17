@@ -620,19 +620,41 @@ export async function deleteInvoice(id: string): Promise<void> {
 }
 
 // ── Org settings (singleton) ───────────────────────────────────────
+//
+// Per-trip-type × per-category default costs. Trigger
+// public.apply_ride_cost_defaults reads this on each ride insert.
+export type RideCostDefaults = Record<
+  "airport" | "p2p" | "hourly",
+  Record<"gas" | "tolls" | "parking" | "amenities", number>
+>;
+
+export const EMPTY_RIDE_COST_DEFAULTS: RideCostDefaults = {
+  airport: { gas: 0, tolls: 0, parking: 0, amenities: 0 },
+  p2p: { gas: 0, tolls: 0, parking: 0, amenities: 0 },
+  hourly: { gas: 0, tolls: 0, parking: 0, amenities: 0 },
+};
+
 export async function getOrgSettings(): Promise<{
   brand_name: string | null;
   dispatch_phone: string | null;
   dispatch_email: string | null;
   invoice_prefix: string | null;
+  ride_cost_defaults: RideCostDefaults;
 }> {
   const { data, error } = await supabase
     .from("org_settings")
-    .select("brand_name, dispatch_phone, dispatch_email, invoice_prefix")
+    .select(
+      "brand_name, dispatch_phone, dispatch_email, invoice_prefix, ride_cost_defaults",
+    )
     .eq("id", 1)
     .single();
   if (error) throw error;
-  return data;
+  return {
+    ...data,
+    ride_cost_defaults:
+      (data?.ride_cost_defaults as RideCostDefaults) ??
+      EMPTY_RIDE_COST_DEFAULTS,
+  };
 }
 
 export async function updateOrgSettings(patch: {
@@ -640,6 +662,7 @@ export async function updateOrgSettings(patch: {
   dispatch_phone?: string | null;
   dispatch_email?: string | null;
   invoice_prefix?: string | null;
+  ride_cost_defaults?: RideCostDefaults;
 }): Promise<void> {
   const { error } = await supabase
     .from("org_settings")

@@ -178,6 +178,9 @@ function Gate() {
       <Routes>
         <Route element={<AppShell />}>
           <Route index element={<Dashboard />} />
+          {/* Vanity aliases — share-friendly URLs that all land on Today. */}
+          <Route path="dashboard" element={<Navigate to="/" replace />} />
+          <Route path="driver-portal" element={<Navigate to="/" replace />} />
           <Route path="rides" element={<Rides />} />
           <Route path="rides/new" element={<RideForm />} />
           <Route path="rides/:id" element={<RideDetail />} />
