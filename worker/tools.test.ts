@@ -15,6 +15,10 @@ type FakeDB = {
   vehicles: any[];
   audit: any[];
   events: any[];
+  expenses_fixed: any[];
+  vehicle_maintenance: any[];
+  ride_costs: any[];
+  invoices: any[];
   rate_limits: { actor: string; minute_bucket: string; count: number }[];
 };
 let db: FakeDB;
@@ -27,6 +31,10 @@ function newDB(): FakeDB {
     vehicles: [],
     audit: [],
     events: [],
+    expenses_fixed: [],
+    vehicle_maintenance: [],
+    ride_costs: [],
+    invoices: [],
     rate_limits: [],
   };
 }
@@ -54,6 +62,11 @@ function fakeSupabase() {
         else if (table === "vehicles") rows = db.vehicles;
         else if (table === "events") rows = db.events;
         else if (table === "audit") rows = db.audit;
+        else if (table === "expenses_fixed") rows = db.expenses_fixed;
+        else if (table === "vehicle_maintenance")
+          rows = db.vehicle_maintenance;
+        else if (table === "ride_costs") rows = db.ride_costs;
+        else if (table === "invoices") rows = db.invoices;
         else rows = [];
         rows = rows.filter((r) => _filters.every((f) => f(r)));
         if (_order) {
@@ -76,6 +89,11 @@ function fakeSupabase() {
             else if (table === "audit") db.audit.push(row);
             else if (table === "drivers") db.drivers.push(row);
             else if (table === "vehicles") db.vehicles.push(row);
+            else if (table === "expenses_fixed") db.expenses_fixed.push(row);
+            else if (table === "vehicle_maintenance")
+              db.vehicle_maintenance.push(row);
+            else if (table === "ride_costs") db.ride_costs.push(row);
+            else if (table === "invoices") db.invoices.push(row);
             inserted.push(row);
           }
           const data = _wantSingle || _wantMaybeSingle ? inserted[0] : inserted;
@@ -1471,5 +1489,285 @@ describe("pii helpers", () => {
     );
     expect(redactAddress("Newport Beach, CA")).toBe("Newport Beach, CA");
     expect(redactAddress("")).toBe("");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────
+// Expenses + invoices tools (Phase 3 / 4)
+// ────────────────────────────────────────────────────────────────────
+
+describe("log_fixed_expense", () => {
+  it("creates a row + activity event", async () => {
+    const { executeTool } = await loadTools();
+    const res = await executeTool(
+      "log_fixed_expense",
+      {
+        category: "insurance",
+        label: "GEICO Commercial Auto",
+        amount_dollars: 300,
+        cadence: "monthly",
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.expense.amount_cents).toBe(30000);
+    expect(body.expense.cadence).toBe("monthly");
+    expect(db.expenses_fixed).toHaveLength(1);
+    expect(db.events.some((e: any) => /Fixed expense/.test(e.message))).toBe(
+      true,
+    );
+  });
+
+  it("rejects non-positive amount", async () => {
+    const { executeTool } = await loadTools();
+    const res = await executeTool(
+      "log_fixed_expense",
+      { category: "insurance", label: "x", amount_dollars: 0 },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBe(true);
+    const body = parseResult(res);
+    expect(body.status).toBe(400);
+  });
+});
+
+describe("log_maintenance", () => {
+  it("creates a record with amortization interval", async () => {
+    const { executeTool } = await loadTools();
+    const vehicle = {
+      id: cryptoRandom(),
+      display_name: "2023 Escalade ESV",
+      plate: "ABC123",
+      active: true,
+    };
+    db.vehicles.push(vehicle);
+    const res = await executeTool(
+      "log_maintenance",
+      {
+        vehicle_name: "Escalade",
+        category: "oil",
+        label: "Synthetic + filter",
+        amount_dollars: 90,
+        service_interval_days: 90,
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.record.vehicle_id).toBe(vehicle.id);
+    expect(body.record.service_interval_days).toBe(90);
+    expect(body.record.amount_cents).toBe(9000);
+  });
+
+  it("404s on unknown vehicle name", async () => {
+    const { executeTool } = await loadTools();
+    const res = await executeTool(
+      "log_maintenance",
+      {
+        vehicle_name: "Nope",
+        category: "oil",
+        label: "x",
+        amount_dollars: 50,
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBe(true);
+    expect(parseResult(res).status).toBe(404);
+  });
+});
+
+describe("log_ride_cost", () => {
+  it("creates an estimate without an actual", async () => {
+    const { executeTool } = await loadTools();
+    const ride = makeRide();
+    const res = await executeTool(
+      "log_ride_cost",
+      {
+        ride_id: ride.id,
+        category: "gas",
+        estimated_dollars: 35,
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.ride_cost.estimated_cents).toBe(3500);
+    expect(body.ride_cost.actual_cents).toBeNull();
+    expect(body.ride_cost.confirmed_at).toBeNull();
+  });
+
+  it("stamps confirmed_at when actual is provided", async () => {
+    const { executeTool } = await loadTools();
+    const ride = makeRide();
+    const res = await executeTool(
+      "log_ride_cost",
+      {
+        ride_id: ride.id,
+        category: "gas",
+        actual_dollars: 38,
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.ride_cost.actual_cents).toBe(3800);
+    expect(body.ride_cost.confirmed_at).toBeTruthy();
+  });
+
+  it("404s on unknown ride", async () => {
+    const { executeTool } = await loadTools();
+    const res = await executeTool(
+      "log_ride_cost",
+      {
+        ride_id: "00000000-0000-0000-0000-000000000000",
+        category: "gas",
+        estimated_dollars: 25,
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBe(true);
+    expect(parseResult(res).status).toBe(404);
+  });
+});
+
+describe("list_invoices", () => {
+  it("returns open invoices by default and enriches with client / ride", async () => {
+    const { executeTool } = await loadTools();
+    const client = makeClient({ name: "Goldman Sachs", company: "Goldman Sachs" });
+    const ride = makeRide({ client_id: client.id });
+    db.invoices.push({
+      id: cryptoRandom(),
+      ride_id: ride.id,
+      number: "SDL-1001",
+      amount_cents: 18200,
+      status: "sent",
+      terms: "net_30",
+      due_date: "2099-12-31",
+      paid_at: null,
+      created_at: new Date().toISOString(),
+    });
+    const res = await executeTool(
+      "list_invoices",
+      {},
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.count).toBe(1);
+    expect(body.invoices[0].client_name).toBe(client.name);
+    expect(body.invoices[0].effective_status).toBe("sent");
+    expect(body.invoices[0].amount_dollars).toBe(182);
+  });
+
+  it("filter='paid' excludes sent", async () => {
+    const { executeTool } = await loadTools();
+    db.invoices.push(
+      {
+        id: cryptoRandom(),
+        ride_id: null,
+        number: "SDL-1",
+        amount_cents: 1000,
+        status: "sent",
+        terms: null,
+        due_date: null,
+        paid_at: null,
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: cryptoRandom(),
+        ride_id: null,
+        number: "SDL-2",
+        amount_cents: 2000,
+        status: "paid",
+        terms: null,
+        due_date: null,
+        paid_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      },
+    );
+    const res = await executeTool(
+      "list_invoices",
+      { status: "paid" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    const body = parseResult(res);
+    expect(body.count).toBe(1);
+    expect(body.invoices[0].number).toBe("SDL-2");
+  });
+});
+
+describe("mark_invoice_paid", () => {
+  it("happy path — by invoice_number, stamps paid_at, writes event", async () => {
+    const { executeTool } = await loadTools();
+    db.invoices.push({
+      id: cryptoRandom(),
+      ride_id: null,
+      number: "SDL-1042",
+      amount_cents: 18200,
+      status: "sent",
+      terms: "net_30",
+      due_date: "2026-06-15",
+      paid_at: null,
+      created_at: new Date().toISOString(),
+    });
+    const res = await executeTool(
+      "mark_invoice_paid",
+      { invoice_number: "SDL-1042" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBeUndefined();
+    const body = parseResult(res);
+    expect(body.before.status).toBe("sent");
+    expect(body.after.status).toBe("paid");
+    expect(body.after.paid_at).toBeTruthy();
+    expect(
+      db.events.some((e: any) => /marked paid/.test(e.message)),
+    ).toBe(true);
+  });
+
+  it("409 on already-paid without force", async () => {
+    const { executeTool } = await loadTools();
+    db.invoices.push({
+      id: cryptoRandom(),
+      ride_id: null,
+      number: "SDL-9",
+      amount_cents: 5000,
+      status: "paid",
+      terms: null,
+      due_date: null,
+      paid_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    });
+    const res = await executeTool(
+      "mark_invoice_paid",
+      { invoice_number: "SDL-9" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBe(true);
+    expect(parseResult(res).status).toBe(409);
+  });
+
+  it("rejects when nothing matches", async () => {
+    const { executeTool } = await loadTools();
+    const res = await executeTool(
+      "mark_invoice_paid",
+      { invoice_number: "SDL-NOPE" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    expect(res.isError).toBe(true);
+    expect(parseResult(res).status).toBe(404);
   });
 });

@@ -64,6 +64,11 @@ for the current roadmap.
 | `list_drivers`         | List active drivers (capped at 50).                       |
 | `list_vehicles`        | List active vehicles (capped at 50).                      |
 | `log_activity`         | Append a free-form note to the dashboard activity feed.   |
+| `log_fixed_expense`    | Record a recurring company cost (insurance, lease, etc.). |
+| `log_maintenance`      | Record a one-time vehicle service; amortize over days.    |
+| `log_ride_cost`        | Add a per-ride cost line (estimated and/or actual).       |
+| `list_invoices`        | Filter/enrich invoices; open / paid / overdue (cap 50).   |
+| `mark_invoice_paid`    | Stamp an invoice paid by id, number, or ride_id.          |
 
 Every write tool returns `{ before, after, changed_fields, audit_id,
 warnings }` (or `{ driver, audit_id, warnings }` for `add_driver`), so
