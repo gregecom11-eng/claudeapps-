@@ -134,11 +134,25 @@ export const TOOL_SCHEMAS = [
   {
     name: "list_rides",
     description:
-      "Return rides on a date or range. Use 'today', 'tomorrow', 'this_week', 'next_week', or YYYY-MM-DD. Optional status filter.",
+      "Return rides in a date range, anchored to Pacific calendar days (America/Los_Angeles). Each day runs 00:00:00.000 through 23:59:59.999 Pacific; late-night rides count toward the day they were worked, not the next. Pass `start_date` and/or `end_date` (YYYY-MM-DD) for explicit ranges, or `date` for keyword shortcuts (today, tomorrow, this_week, next_week, or a single YYYY-MM-DD). Paginate via the opaque `cursor`. Default: today only.",
     inputSchema: {
       type: "object",
       properties: {
-        date: { type: "string" },
+        date: {
+          type: "string",
+          description:
+            "Keyword (today | tomorrow | this_week | next_week) or a single YYYY-MM-DD Pacific calendar date. Ignored when start_date or end_date is also passed.",
+        },
+        start_date: {
+          type: "string",
+          description:
+            "YYYY-MM-DD Pacific calendar date. Range starts at 00:00:00.000 Pacific on this day.",
+        },
+        end_date: {
+          type: "string",
+          description:
+            "YYYY-MM-DD Pacific calendar date. Range ends at 23:59:59.999 Pacific on this day. When omitted while start_date is given, defaults to today (Pacific).",
+        },
         status: {
           type: "string",
           enum: [
@@ -152,6 +166,11 @@ export const TOOL_SCHEMAS = [
           ],
         },
         limit: { type: "integer" },
+        cursor: {
+          type: "string",
+          description:
+            "Opaque cursor returned in `next_cursor` of a previous response.",
+        },
       },
     },
   },
@@ -815,52 +834,207 @@ function s(v: unknown): string | undefined {
   return t === "" ? undefined : t;
 }
 
-function resolveDateRange(
-  date: string | undefined,
-): { from: string; to: string } | null {
-  if (!date) return null;
-  const anchor = new Date(
-    new Date().toLocaleString("en-US", { timeZone: BUSINESS_TZ }),
-  );
-  const startOfDay = (d: Date) => {
-    const x = new Date(d);
-    x.setHours(0, 0, 0, 0);
-    return x;
-  };
-  const endOfDay = (d: Date) => {
-    const x = new Date(d);
-    x.setHours(23, 59, 59, 999);
-    return x;
-  };
+// ── Pacific-day date math ────────────────────────────────────────────
+//
+// `pickup_at` is stored UTC. Every "day" the operator reasons about is
+// a Pacific (America/Los_Angeles) calendar day: 00:00:00.000 PT through
+// 23:59:59.999 PT, regardless of DST. A ride at Monday 11:30 PM PT
+// belongs to Monday, not Tuesday — only the local 00:00 boundary rolls
+// the day forward.
+//
+// Old code used `new Date(...).setHours(0,0,0,0)` after a
+// toLocaleString round-trip; that builds a Date whose UTC fields look
+// like Pacific wall-clock but then `setHours` mutates in the Worker's
+// local zone (UTC on Cloudflare), so .toISOString() comes back at UTC
+// midnight, 7-8 hours off the real Pacific midnight. Replaced below.
 
-  if (date === "today") {
+/** Read the wall-clock components for `d` as observed in Pacific. */
+function pacificComponentsOf(d: Date): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+} {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: BUSINESS_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) =>
+    parseInt(parts.find((p) => p.type === t)?.value ?? "0", 10);
+  // Intl sometimes reports midnight as 24 in hour12:false mode.
+  let hour = get("hour");
+  if (hour === 24) hour = 0;
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+    hour,
+    minute: get("minute"),
+    second: get("second"),
+  };
+}
+
+/**
+ * Convert a Pacific wall-clock instant (y, mo, d, h, mi, s, ms) into the
+ * UTC instant that observes it. DST-correct: derives the offset from
+ * what Pacific reports for a naive guess, then adjusts. Both 00:00 and
+ * 23:59:59 are unambiguous across spring-forward and fall-back (DST
+ * transitions happen at 2 AM PT), so this is exact for our use.
+ */
+function pacificWallTimeToUtc(
+  y: number,
+  mo: number,
+  d: number,
+  h: number,
+  mi: number,
+  s: number,
+  ms: number,
+): Date {
+  const naive = Date.UTC(y, mo - 1, d, h, mi, s, ms);
+  const parts = pacificComponentsOf(new Date(naive));
+  const partsAsUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+    ms,
+  );
+  // `naive - partsAsUtc` is the Pacific offset at `naive` (negative).
+  // Subtracting it from `naive` lands at the UTC instant whose Pacific
+  // time is the input components.
+  return new Date(naive + (naive - partsAsUtc));
+}
+
+/** Pacific calendar day "YYYY-MM-DD" → { from, to } as UTC ISO strings. */
+function pacificDayBounds(
+  ymd: string,
+): { from: string; to: string } | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  return {
+    from: pacificWallTimeToUtc(y, mo, d, 0, 0, 0, 0).toISOString(),
+    to: pacificWallTimeToUtc(y, mo, d, 23, 59, 59, 999).toISOString(),
+  };
+}
+
+/** Today's Pacific calendar date as "YYYY-MM-DD". */
+function pacificToday(now = new Date()): string {
+  const p = pacificComponentsOf(now);
+  return `${p.year}-${pad(p.month, 2)}-${pad(p.day, 2)}`;
+}
+
+function pad(n: number, w: number): string {
+  return String(n).padStart(w, "0");
+}
+
+/** Add `days` to a "YYYY-MM-DD" string (calendar-naive, fine for our spans). */
+function shiftDate(ymd: string, days: number): string {
+  const [y, mo, d] = ymd.split("-").map(Number);
+  // Anchor at noon UTC to dodge DST near midnight in either direction.
+  const t = new Date(Date.UTC(y, mo - 1, d, 12)).getTime();
+  const t2 = new Date(t + days * 86_400_000);
+  return `${t2.getUTCFullYear()}-${pad(t2.getUTCMonth() + 1, 2)}-${pad(
+    t2.getUTCDate(),
+    2,
+  )}`;
+}
+
+/**
+ * Resolve a list_rides call's date arguments into Pacific calendar
+ * bounds and a UTC instant range.
+ *
+ *   start_date + end_date  → that span (Pacific calendar days)
+ *   only start_date        → start_date through today (Pacific)
+ *   only end_date          → that single day (Pacific)
+ *   date keyword/literal   → today | tomorrow | this_week | next_week
+ *                            | YYYY-MM-DD (all in Pacific)
+ *   nothing                → today (Pacific)
+ *
+ * Returns null only on an unparseable input (bad YYYY-MM-DD); callers
+ * can surface that as a 400.
+ */
+function resolveListRangeFromArgs(args: Record<string, unknown>): {
+  range: { from: string; to: string };
+  startYmd: string;
+  endYmd: string;
+  label: string;
+} | null {
+  const start = s(args.start_date);
+  const end = s(args.end_date);
+  const today = pacificToday();
+
+  if (start || end) {
+    const a = start ?? end!;
+    const b = end ?? today;
+    const lo = pacificDayBounds(a);
+    const hi = pacificDayBounds(b);
+    if (!lo || !hi) return null;
+    // Allow callers to pass start > end (we just swap rather than error).
+    const [startYmd, endYmd] = a <= b ? [a, b] : [b, a];
+    const loB = pacificDayBounds(startYmd)!;
+    const hiB = pacificDayBounds(endYmd)!;
     return {
-      from: startOfDay(anchor).toISOString(),
-      to: endOfDay(anchor).toISOString(),
+      range: { from: loB.from, to: hiB.to },
+      startYmd,
+      endYmd,
+      label:
+        startYmd === endYmd
+          ? `${startYmd} PT`
+          : `${startYmd} → ${endYmd} PT`,
     };
   }
+
+  const date = s(args.date) ?? "today";
+
+  if (date === "today") {
+    const b = pacificDayBounds(today)!;
+    return { range: b, startYmd: today, endYmd: today, label: `Today (${today} PT)` };
+  }
   if (date === "tomorrow") {
-    const t = new Date(anchor.getTime() + 24 * 60 * 60 * 1000);
-    return { from: startOfDay(t).toISOString(), to: endOfDay(t).toISOString() };
+    const t = shiftDate(today, 1);
+    const b = pacificDayBounds(t)!;
+    return { range: b, startYmd: t, endYmd: t, label: `Tomorrow (${t} PT)` };
   }
   if (date === "this_week") {
-    const start = startOfDay(anchor);
-    const end = endOfDay(new Date(start.getTime() + 6 * 86_400_000));
-    return { from: start.toISOString(), to: end.toISOString() };
+    const t = shiftDate(today, 6);
+    const lo = pacificDayBounds(today)!;
+    const hi = pacificDayBounds(t)!;
+    return {
+      range: { from: lo.from, to: hi.to },
+      startYmd: today,
+      endYmd: t,
+      label: `This week (${today} → ${t} PT)`,
+    };
   }
   if (date === "next_week") {
-    const start = startOfDay(new Date(anchor.getTime() + 7 * 86_400_000));
-    const end = endOfDay(new Date(start.getTime() + 6 * 86_400_000));
-    return { from: start.toISOString(), to: end.toISOString() };
+    const a = shiftDate(today, 7);
+    const b = shiftDate(today, 13);
+    const lo = pacificDayBounds(a)!;
+    const hi = pacificDayBounds(b)!;
+    return {
+      range: { from: lo.from, to: hi.to },
+      startYmd: a,
+      endYmd: b,
+      label: `Next week (${a} → ${b} PT)`,
+    };
   }
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-  if (m) {
-    const [, y, mo, d] = m;
-    const start = new Date(`${y}-${mo}-${d}T00:00:00`);
-    const end = new Date(`${y}-${mo}-${d}T23:59:59.999`);
-    return { from: start.toISOString(), to: end.toISOString() };
-  }
-  return null;
+
+  const single = pacificDayBounds(date);
+  if (!single) return null;
+  return { range: single, startYmd: date, endYmd: date, label: `${date} PT` };
 }
 
 type DriverRow = { id: string; full_name: string };
@@ -1041,8 +1215,14 @@ async function createRide(args: Record<string, unknown>, env: Env, ctx: ToolCont
 
 async function listRides(args: Record<string, unknown>, env: Env) {
   const sb = adminClient(env);
-  const date = s(args.date) ?? "today";
-  const range = resolveDateRange(date);
+  const resolved = resolveListRangeFromArgs(args);
+  if (!resolved) {
+    throw new ToolError(
+      400,
+      "Could not parse date range. Use start_date / end_date as YYYY-MM-DD, or date as today|tomorrow|this_week|next_week|YYYY-MM-DD.",
+    );
+  }
+  const { range, startYmd, endYmd, label } = resolved;
   const status = s(args.status);
   // Hard cap at 50; the caller's `limit` only shrinks it further. Caller
   // can paginate via `cursor`. Ignoring oversized requests prevents a
@@ -1052,7 +1232,7 @@ async function listRides(args: Record<string, unknown>, env: Env) {
   const cursor = decodeCursor(s(args.cursor));
 
   let q = sb.from("rides").select("*").order("pickup_at", { ascending: true });
-  if (range) q = q.gte("pickup_at", range.from).lte("pickup_at", range.to);
+  q = q.gte("pickup_at", range.from).lte("pickup_at", range.to);
   if (status) q = q.eq("status", status);
   if (cursor?.after_pickup_at) q = q.gt("pickup_at", cursor.after_pickup_at);
   // Fetch limit+1 to detect whether more rows exist past this page.
@@ -1068,8 +1248,14 @@ async function listRides(args: Record<string, unknown>, env: Env) {
     : null;
 
   return {
-    range_label: date,
-    range,
+    range_label: label,
+    range: {
+      from: range.from,
+      to: range.to,
+      start_date: startYmd,
+      end_date: endYmd,
+      timezone: BUSINESS_TZ,
+    },
     count: page.length,
     has_more: hasMore,
     next_cursor: nextCursor,
@@ -1121,7 +1307,10 @@ async function updateRideStatus(
     if (!passenger_name) {
       throw new Error("Either ride_id or passenger_name (+ date) is required.");
     }
-    const range = date ? resolveDateRange(date) : null;
+    const resolvedForLookup = date
+      ? resolveListRangeFromArgs({ date })
+      : null;
+    const range = resolvedForLookup?.range ?? null;
     let q = sb
       .from("rides")
       .select("id, passenger_name, pickup_at")

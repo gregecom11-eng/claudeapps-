@@ -1465,6 +1465,237 @@ describe("update_client — previous_addresses cap at 20 FIFO", () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────────
+// list_rides date-range correctness
+//
+// Bug repro: callers passing start_date / end_date got "today" back
+// because the schema didn't expose those params; the handler also did
+// Pacific math via Date.setHours on a UTC machine, collapsing days by
+// 7-8 hours. These tests pin both fixes.
+//
+// Throughout, "now" is fixed to Tue May 12 2026 at 11 AM Pacific (UTC
+// 18:00) so "today" is May 12 PT, "yesterday" is Mon May 11 PT, "7 days
+// ago" is Tue May 5 PT.
+// ────────────────────────────────────────────────────────────────────
+
+function makeRideAt(pickupAtIso: string, overrides: Partial<any> = {}) {
+  return makeRide({ pickup_at: pickupAtIso, ...overrides });
+}
+
+describe("list_rides — Pacific day bucketing", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // Tuesday May 12 2026, 11 AM PT (PDT, UTC-7).
+    vi.setSystemTime(new Date("2026-05-12T18:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("11:59:59 PM Pacific belongs to that same day, not the next", async () => {
+    const { executeTool } = await loadTools();
+    // Mon 2026-05-11 23:59:59 PT (PDT, UTC-7) → 2026-05-12T06:59:59Z.
+    const lateMon = makeRideAt("2026-05-12T06:59:59.000Z", {
+      passenger_name: "Late Monday",
+    });
+
+    const res = await executeTool(
+      "list_rides",
+      { start_date: "2026-05-11", end_date: "2026-05-11" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    const body = parseResult(res);
+    expect(body.range.start_date).toBe("2026-05-11");
+    expect(body.range.end_date).toBe("2026-05-11");
+    expect(body.range.timezone).toBe("America/Los_Angeles");
+    // The range upper bound is 23:59:59.999 PT = 06:59:59.999 UTC next day.
+    expect(body.range.to).toBe("2026-05-12T06:59:59.999Z");
+    expect(body.count).toBe(1);
+    expect(body.rides[0].id).toBe(lateMon.id);
+  });
+
+  it("12:15 AM Tuesday Pacific does NOT bucket into Monday", async () => {
+    const { executeTool } = await loadTools();
+    makeRideAt("2026-05-12T05:30:00.000Z", { passenger_name: "Mon 10:30 PM PT" });
+    makeRideAt("2026-05-12T07:15:00.000Z", { passenger_name: "Tue 12:15 AM PT" });
+
+    const res = await executeTool(
+      "list_rides",
+      { start_date: "2026-05-11", end_date: "2026-05-11" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    const body = parseResult(res);
+    expect(body.count).toBe(1);
+    expect(body.rides[0].passenger_name).toBe("Mon 10:30 PM PT");
+  });
+
+  it("multi-day range honors start_date and end_date Pacific-aligned, including Sunday 11:59 PM", async () => {
+    const { executeTool } = await loadTools();
+    // Last week: Mon 2026-05-04 → Sun 2026-05-10 Pacific.
+    // Sun 23:59:59 PT (PDT) = 2026-05-11T06:59:59Z.
+    const sundayLate = makeRideAt("2026-05-11T06:59:59.000Z", {
+      passenger_name: "Sun late",
+    });
+    // Monday morning of NEXT week (should be excluded).
+    makeRideAt("2026-05-11T07:30:00.000Z", { passenger_name: "Next Mon AM" });
+    // Wednesday mid-week (should be included).
+    const midWeek = makeRideAt("2026-05-06T20:00:00.000Z", {
+      passenger_name: "Wed",
+    });
+
+    const res = await executeTool(
+      "list_rides",
+      { start_date: "2026-05-04", end_date: "2026-05-10" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    const body = parseResult(res);
+    expect(body.range.start_date).toBe("2026-05-04");
+    expect(body.range.end_date).toBe("2026-05-10");
+    expect(body.range_label).toBe("2026-05-04 → 2026-05-10 PT");
+    const ids = body.rides.map((r: any) => r.id).sort();
+    expect(ids).toEqual([midWeek.id, sundayLate.id].sort());
+  });
+
+  it("start_date only → range = start_date through today", async () => {
+    const { executeTool } = await loadTools();
+    // 7 days ago Pacific = 2026-05-05.
+    makeRideAt("2026-05-05T20:00:00.000Z", { passenger_name: "7 days ago" });
+    makeRideAt("2026-05-08T22:00:00.000Z", { passenger_name: "Mid window" });
+    // Today (May 12 PT).
+    makeRideAt("2026-05-12T22:00:00.000Z", { passenger_name: "Today" });
+    // Outside (8 days ago).
+    makeRideAt("2026-05-04T20:00:00.000Z", { passenger_name: "Too old" });
+
+    const res = await executeTool(
+      "list_rides",
+      { start_date: "2026-05-05" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    const body = parseResult(res);
+    expect(body.range.start_date).toBe("2026-05-05");
+    expect(body.range.end_date).toBe("2026-05-12");
+    expect(body.count).toBe(3);
+    expect(body.rides.map((r: any) => r.passenger_name).sort()).toEqual([
+      "7 days ago",
+      "Mid window",
+      "Today",
+    ]);
+  });
+
+  it("no params → today only (00:00–23:59:59.999 Pacific)", async () => {
+    const { executeTool } = await loadTools();
+    // Today (May 12 PT), all hours.
+    makeRideAt("2026-05-12T08:00:00.000Z", { passenger_name: "Today 1 AM" });
+    makeRideAt("2026-05-13T06:59:59.000Z", {
+      passenger_name: "Today 11:59:59 PM PT",
+    });
+    // Yesterday.
+    makeRideAt("2026-05-12T06:59:00.000Z", { passenger_name: "Yesterday late" });
+    // Tomorrow.
+    makeRideAt("2026-05-13T07:30:00.000Z", { passenger_name: "Tomorrow" });
+
+    const res = await executeTool("list_rides", {}, fakeEnv as any, fakeCtx);
+    const body = parseResult(res);
+    expect(body.range.start_date).toBe("2026-05-12");
+    expect(body.range.end_date).toBe("2026-05-12");
+    expect(body.range_label).toBe("Today (2026-05-12 PT)");
+    expect(body.count).toBe(2);
+    expect(body.rides.map((r: any) => r.passenger_name).sort()).toEqual([
+      "Today 1 AM",
+      "Today 11:59:59 PM PT",
+    ]);
+  });
+
+  it("spring-forward DST day: 23h day, late evening ride still included", async () => {
+    const { executeTool } = await loadTools();
+    // March 8 2026 is the spring-forward day in the US (2 AM PT → 3 AM PT).
+    // March 8 00:00 PT (still PST, UTC-8) = March 8 08:00 UTC.
+    // March 8 23:59:59.999 PT (now PDT, UTC-7) = March 9 06:59:59.999 UTC.
+    // A ride at March 8 23:00 PDT = March 9 06:00 UTC.
+    makeRideAt("2026-03-09T06:00:00.000Z", { passenger_name: "DST late" });
+    // Day BEFORE (March 7 23:30 PST = March 8 07:30 UTC) — outside.
+    makeRideAt("2026-03-08T07:30:00.000Z", { passenger_name: "Before window" });
+
+    const res = await executeTool(
+      "list_rides",
+      { start_date: "2026-03-08", end_date: "2026-03-08" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    const body = parseResult(res);
+    expect(body.range.from).toBe("2026-03-08T08:00:00.000Z");
+    expect(body.range.to).toBe("2026-03-09T06:59:59.999Z");
+    expect(body.count).toBe(1);
+    expect(body.rides[0].passenger_name).toBe("DST late");
+  });
+
+  it("fall-back DST day: 25h day, neither boundary drops a ride", async () => {
+    const { executeTool } = await loadTools();
+    // November 1 2026 is the fall-back day (2 AM PDT → 1 AM PST).
+    // Nov 1 00:00 PDT (UTC-7) = Nov 1 07:00 UTC.
+    // Nov 1 23:59:59.999 PST (UTC-8) = Nov 2 07:59:59.999 UTC.
+    makeRideAt("2026-11-01T07:30:00.000Z", { passenger_name: "Early PDT" });
+    makeRideAt("2026-11-02T07:30:00.000Z", { passenger_name: "Late PST" });
+    // Out of window.
+    makeRideAt("2026-11-02T08:30:00.000Z", { passenger_name: "Nov 2 AM" });
+
+    const res = await executeTool(
+      "list_rides",
+      { start_date: "2026-11-01", end_date: "2026-11-01" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    const body = parseResult(res);
+    expect(body.range.from).toBe("2026-11-01T07:00:00.000Z");
+    expect(body.range.to).toBe("2026-11-02T07:59:59.999Z");
+    expect(body.count).toBe(2);
+    expect(body.rides.map((r: any) => r.passenger_name).sort()).toEqual([
+      "Early PDT",
+      "Late PST",
+    ]);
+  });
+
+  it("pagination: oversize range returns has_more + next_cursor", async () => {
+    const { executeTool } = await loadTools();
+    // Seed 55 rides spread across the week (May 4–10 PT).
+    const baseUtc = new Date("2026-05-04T18:00:00.000Z").getTime();
+    for (let i = 0; i < 55; i++) {
+      makeRideAt(
+        new Date(baseUtc + i * 60 * 60 * 1000).toISOString(),
+        { passenger_name: `R${i}` },
+      );
+    }
+    const res = await executeTool(
+      "list_rides",
+      { start_date: "2026-05-04", end_date: "2026-05-10" },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    const body = parseResult(res);
+    expect(body.count).toBe(50);
+    expect(body.has_more).toBe(true);
+    expect(body.next_cursor).toBeTruthy();
+    // Follow the cursor and the rest comes through.
+    const res2 = await executeTool(
+      "list_rides",
+      {
+        start_date: "2026-05-04",
+        end_date: "2026-05-10",
+        cursor: body.next_cursor,
+      },
+      fakeEnv as any,
+      fakeCtx,
+    );
+    const body2 = parseResult(res2);
+    expect(body2.count).toBe(5);
+    expect(body2.has_more).toBe(false);
+  });
+});
+
 // Bonus: redaction helper unit tests, since they're the security
 // boundary for the activity feed.
 describe("pii helpers", () => {
