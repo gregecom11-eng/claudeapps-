@@ -143,6 +143,19 @@ export async function setDriverActive(
     .eq("id", id);
   if (error) throw error;
 }
+// Flag (or unflag) a driver row as the owner-operator. Multiple rows
+// may be owner — a solo operator accumulates several driver identities
+// over time, and all of them count as "me" on the Earnings page.
+export async function setDriverOwner(
+  id: string,
+  isOwner: boolean,
+): Promise<void> {
+  const { error } = await supabase
+    .from("drivers")
+    .update({ is_owner: isOwner })
+    .eq("id", id);
+  if (error) throw error;
+}
 // Returns active + inactive together; UI can split visually.
 export async function listAllDrivers(): Promise<Driver[]> {
   const { data, error } = await supabase
@@ -732,6 +745,22 @@ export async function upsertFixedExpense(
   const { data, error } = await supabase
     .from("expenses_fixed")
     .upsert(e)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as import("./types").ExpenseFixed;
+}
+// Partial patch on an existing row (archive, reactivate, etc.). Uses a
+// real UPDATE so we don't have to satisfy NOT NULL columns the way an
+// upsert's insert path would.
+export async function updateFixedExpense(
+  id: string,
+  patch: Partial<import("./types").ExpenseFixed>,
+): Promise<import("./types").ExpenseFixed> {
+  const { data, error } = await supabase
+    .from("expenses_fixed")
+    .update(patch)
+    .eq("id", id)
     .select()
     .single();
   if (error) throw error;
