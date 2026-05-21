@@ -15,6 +15,7 @@ import { Link } from "react-router-dom";
 import {
   deleteFixedExpense,
   deleteMaintenance,
+  deleteRideCost,
   EMPTY_RIDE_COST_DEFAULTS,
   getOrgSettings,
   listAllVehicles,
@@ -22,12 +23,14 @@ import {
   listMaintenance,
   listRideCostsForRides,
   listRides,
+  updateFixedExpense,
   updateOrgSettings,
   upsertFixedExpense,
   upsertMaintenance,
   type RideCostDefaults,
 } from "../lib/api";
 import { fmtMoney } from "../lib/format";
+import { Icon } from "../components/Icon";
 import {
   FIXED_CADENCE_LABEL,
   FIXED_CATEGORY_LABEL,
@@ -266,18 +269,22 @@ function FixedTab({
     }
     setBusy(true);
     setError(null);
+    const payload = {
+      category: draft.category,
+      label: draft.label.trim(),
+      amount_cents: cents,
+      cadence: draft.cadence,
+      effective_from: draft.effective_from,
+      effective_to: draft.effective_to || null,
+      vehicle_id: draft.vehicle_id || null,
+      notes: draft.notes.trim() || null,
+    };
     try {
-      await upsertFixedExpense({
-        ...(draft.id ? { id: draft.id } : {}),
-        category: draft.category,
-        label: draft.label.trim(),
-        amount_cents: cents,
-        cadence: draft.cadence,
-        effective_from: draft.effective_from,
-        effective_to: draft.effective_to || null,
-        vehicle_id: draft.vehicle_id || null,
-        notes: draft.notes.trim() || null,
-      });
+      if (draft.id) {
+        await updateFixedExpense(draft.id, payload);
+      } else {
+        await upsertFixedExpense(payload);
+      }
       setDraft(null);
       onReload();
     } catch (e) {
@@ -287,28 +294,53 @@ function FixedTab({
     }
   };
   const archiveRow = async (e: ExpenseFixed) => {
-    if (!confirm(`Archive "${e.label}"? It won't count toward future windows.`)) {
+    if (
+      !confirm(
+        `Archive "${e.label}"? It stops counting toward future windows but stays on the books for history.`,
+      )
+    ) {
       return;
     }
     setBusy(true);
+    setError(null);
     try {
-      await upsertFixedExpense({
-        id: e.id,
+      await updateFixedExpense(e.id, {
         effective_to: new Date().toISOString().slice(0, 10),
       });
       onReload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't archive.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const reactivateRow = async (e: ExpenseFixed) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await updateFixedExpense(e.id, { effective_to: null });
+      onReload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't reactivate.");
     } finally {
       setBusy(false);
     }
   };
   const remove = async (e: ExpenseFixed) => {
-    if (!confirm(`Delete "${e.label}" permanently? Historical allocations using this row will disappear.`)) {
+    if (
+      !confirm(
+        `Delete "${e.label}" permanently? This can't be undone.`,
+      )
+    ) {
       return;
     }
     setBusy(true);
+    setError(null);
     try {
       await deleteFixedExpense(e.id);
       onReload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't delete.");
     } finally {
       setBusy(false);
     }
@@ -365,6 +397,8 @@ function FixedTab({
           vehicles={vehicles}
           onEdit={startEdit}
           onArchive={archiveRow}
+          onReactivate={reactivateRow}
+          onDelete={remove}
           busy={busy}
         />
       ) : null}
@@ -381,7 +415,9 @@ function FixedTab({
             rows={archived}
             vehicles={vehicles}
             onEdit={startEdit}
-            onArchive={remove} // archived rows: action is delete
+            onArchive={archiveRow}
+            onReactivate={reactivateRow}
+            onDelete={remove}
             archivedView
             busy={busy}
           />
@@ -547,6 +583,8 @@ function FixedTable({
   vehicles,
   onEdit,
   onArchive,
+  onReactivate,
+  onDelete,
   archivedView = false,
   busy,
 }: {
@@ -554,6 +592,8 @@ function FixedTable({
   vehicles: Vehicle[];
   onEdit: (e: ExpenseFixed) => void;
   onArchive: (e: ExpenseFixed) => void;
+  onReactivate: (e: ExpenseFixed) => void;
+  onDelete: (e: ExpenseFixed) => void;
   archivedView?: boolean;
   busy: boolean;
 }) {
@@ -623,7 +663,7 @@ function FixedTable({
                     {e.effective_to ? ` → ${e.effective_to}` : ""}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <div className="inline-flex items-center gap-1">
+                    <div className="inline-flex items-center gap-1 flex-wrap justify-end">
                       <button
                         className="btn btn-ghost"
                         style={{
@@ -636,6 +676,34 @@ function FixedTable({
                       >
                         Edit
                       </button>
+                      {archivedView ? (
+                        <button
+                          className="btn btn-ghost"
+                          style={{
+                            height: 30,
+                            padding: "0 10px",
+                            fontSize: 12,
+                            color: "var(--accent)",
+                          }}
+                          disabled={busy}
+                          onClick={() => onReactivate(e)}
+                        >
+                          Reactivate
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-ghost"
+                          style={{
+                            height: 30,
+                            padding: "0 10px",
+                            fontSize: 12,
+                          }}
+                          disabled={busy}
+                          onClick={() => onArchive(e)}
+                        >
+                          Archive
+                        </button>
+                      )}
                       <button
                         className="btn btn-ghost"
                         style={{
@@ -645,9 +713,9 @@ function FixedTable({
                           color: "var(--danger)",
                         }}
                         disabled={busy}
-                        onClick={() => onArchive(e)}
+                        onClick={() => onDelete(e)}
                       >
-                        {archivedView ? "Delete" : "Archive"}
+                        Delete
                       </button>
                     </div>
                   </td>
@@ -862,13 +930,32 @@ function PerRideTab({
   loading,
   defaults,
   onDefaultsChange,
+  onReload,
 }: {
   rides: Ride[];
   costs: RideCost[];
   loading: boolean;
   defaults: RideCostDefaults;
   onDefaultsChange: (next: RideCostDefaults) => void;
+  onReload: () => void;
 }) {
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const removeCost = async (c: RideCost) => {
+    if (
+      !confirm(
+        `Delete the ${RIDE_COST_CATEGORY_LABEL[c.category]} cost line on this ride?`,
+      )
+    ) {
+      return;
+    }
+    setDeletingId(c.id);
+    try {
+      await deleteRideCost(c.id);
+      onReload();
+    } finally {
+      setDeletingId(null);
+    }
+  };
   // Group costs by ride, then summarise per category.
   const byCategory = useMemo(() => {
     const map = new Map<
@@ -1132,6 +1219,23 @@ function PerRideTab({
                         {confirmed ? "actual" : "estimated"}
                       </div>
                     </div>
+                    <button
+                      onClick={() => removeCost(c)}
+                      disabled={deletingId === c.id}
+                      title="Delete this cost line"
+                      className="shrink-0 inline-grid place-items-center transition active:scale-[0.92]"
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 7,
+                        border: "1px solid var(--border)",
+                        background: "var(--surface-2)",
+                        color: "var(--danger)",
+                        opacity: deletingId === c.id ? 0.5 : 1,
+                      }}
+                    >
+                      <Icon name="x" size={12} />
+                    </button>
                   </div>
                 );
               })}
@@ -1677,6 +1781,7 @@ export function Expenses() {
           loading={loading}
           defaults={defaults}
           onDefaultsChange={setDefaults}
+          onReload={load}
         />
       ) : null}
       {tab === "maintenance" ? (

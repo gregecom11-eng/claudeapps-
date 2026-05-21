@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { listAllDrivers, listRides } from "../lib/api";
+import { listAllDrivers, listRides, setDriverOwner } from "../lib/api";
 import { fmtMoney } from "../lib/format";
 import { Avatar } from "../components/Avatar";
 import { Icon } from "../components/Icon";
@@ -10,9 +10,10 @@ export function Drivers() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [rides, setRides] = useState<Ride[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [ownerBusy, setOwnerBusy] = useState<string | null>(null);
 
-  useEffect(() => {
-    Promise.all([listAllDrivers(), listRides({ limit: 500 })])
+  const load = useCallback(() => {
+    return Promise.all([listAllDrivers(), listRides({ limit: 500 })])
       .then(([d, r]) => {
         setDrivers(d);
         setRides(r);
@@ -21,6 +22,36 @@ export function Drivers() {
         setError(e instanceof Error ? e.message : "Failed to load"),
       );
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const toggleOwner = async (d: Driver) => {
+    const next = !d.is_owner;
+    if (
+      !next &&
+      drivers.filter((x) => x.is_owner).length <= 1
+    ) {
+      if (
+        !confirm(
+          "This is the only driver flagged as you. Unflagging it means the Earnings page can't tell which rides are your income. Continue?",
+        )
+      ) {
+        return;
+      }
+    }
+    setOwnerBusy(d.id);
+    setError(null);
+    try {
+      await setDriverOwner(d.id, next);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't update.");
+    } finally {
+      setOwnerBusy(null);
+    }
+  };
 
   const stats = useMemo(() => {
     const nowMs = Date.now();
@@ -86,6 +117,15 @@ export function Drivers() {
             <Link to="/settings" className="text-accent">
               Settings
             </Link>
+            . Tap{" "}
+            <span style={{ color: "var(--accent)", fontWeight: 600 }}>
+              This is me
+            </span>{" "}
+            on every driver row that's you — their rides (and unassigned
+            rides) count as your income on{" "}
+            <Link to="/earnings" className="text-accent">
+              Earnings
+            </Link>
             .
           </p>
         </div>
@@ -123,6 +163,21 @@ export function Drivers() {
                     style={{ fontSize: 14, fontWeight: 600 }}
                   >
                     {d.full_name.replace(/\s+\(.*\)$/, "")}
+                    {d.is_owner ? (
+                      <span
+                        className="ml-2 chip"
+                        style={{
+                          background: "var(--accent-soft)",
+                          color: "var(--accent-strong)",
+                          fontSize: 10.5,
+                          borderColor:
+                            "color-mix(in oklab, var(--accent) 35%, var(--border))",
+                          fontWeight: 600,
+                        }}
+                      >
+                        You
+                      </span>
+                    ) : null}
                     {!d.active ? (
                       <span
                         className="ml-2 chip"
@@ -171,6 +226,40 @@ export function Drivers() {
                     {s.completed} completed · {fmtMoney(s.revenueWeek)} this week
                   </div>
                 </div>
+                <button
+                  onClick={() => toggleOwner(d)}
+                  disabled={ownerBusy === d.id}
+                  title={
+                    d.is_owner
+                      ? "Stop counting this driver's rides as your income"
+                      : "Count this driver's rides as your income"
+                  }
+                  className="shrink-0 inline-flex items-center gap-1.5 transition active:scale-[0.97]"
+                  style={{
+                    height: 34,
+                    padding: "0 12px",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                    border: `1px solid ${
+                      d.is_owner ? "var(--accent)" : "var(--border)"
+                    }`,
+                    background: d.is_owner
+                      ? "var(--accent)"
+                      : "var(--surface-2)",
+                    color: d.is_owner ? "#15161B" : "var(--text-muted)",
+                    cursor: ownerBusy === d.id ? "default" : "pointer",
+                    opacity: ownerBusy === d.id ? 0.6 : 1,
+                  }}
+                >
+                  <Icon name={d.is_owner ? "check" : "user"} size={12} />
+                  {ownerBusy === d.id
+                    ? "Saving…"
+                    : d.is_owner
+                      ? "This is me"
+                      : "This is me?"}
+                </button>
               </li>
             );
           })}
